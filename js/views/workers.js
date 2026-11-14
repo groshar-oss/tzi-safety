@@ -7,13 +7,13 @@ import { TRAINING_KINDS, COUNTS_ANNUAL, age, validIsraeliId, workersOf, training
   putWorkerFile, renderPdfPages, pagesToPdf, loadImg, sha256Hex, israelDay, attendanceOf, isPresent, daysPresent, lastAttendanceDay,
   heightExemption, canExemptHeight, exemptApprover } from '../workers.js';
 import { pad } from './sign.js';
-import { LANGS, langLabel, langCode, localStatement, reminderText, OK_BTN, SIGN_HERE } from '../langs.js';
-import { waLink, waShare } from '../alerts.js';
+import { LANGS, langLabel, langCode, localStatement, reminderText, OK_BTN, SIGN_HERE, LINK_MSG } from '../langs.js';
+import { waLink, waShare, appUrl } from '../alerts.js';
 import { scanId, natName, natLang } from '../ocr.js';
 import { openFile, fmtDT } from './common.js';
 
 export const canSeeWorkers = siteId => hasRole(siteId, 'con', 'so', 'sm', 'wm', 'rep', 'bakar');
-export const canRegister = siteId => hasRole(siteId, 'wm', 'rep');
+export const canRegister = siteId => hasRole(siteId, 'wm', 'rep', 'so');
 const today = () => new Date().toISOString().slice(0, 10);
 const ST = { ok: ['green', 'מותר לעבוד'], warn: ['amber', 'פג בקרוב'], bad: ['red', 'אסור להעסיק'], off: ['', 'לא פעיל'] };
 const stChip = st => `<span class="chip ${ST[st.lv][0]}">${ST[st.lv][1]}</span>`;
@@ -351,14 +351,14 @@ const TOPIC = {
   toolbox: '', other: ''
 };
 export async function newTraining(s) {
-  const me = S.data.site_people.find(p => p.site_id === s.id && p.active !== false && (p.email || '').toLowerCase() === (S.user?.email || '').toLowerCase() && ['wm', 'rep'].includes(p.role))
+  const me = S.data.site_people.find(p => p.site_id === s.id && p.active !== false && (p.email || '').toLowerCase() === (S.user?.email || '').toLowerCase() && ['wm', 'rep', 'so'].includes(p.role))
     || S.data.site_people.find(p => p.site_id === s.id && p.active !== false && ['wm', 'rep'].includes(p.role) && !p.backup);
   const v = await modal({ title: 'הדרכה חדשה', ok: 'פתיחה והחתמת עובדים',
     body: `${select('סוג ההדרכה', 'kind', TRAINING_KINDS, 'intro')}
       ${area('נושא ותוכן ההדרכה', 'topic', TOPIC.intro)}
-      <div class="grid g2">${field('שם המדריך', 'trainer_name', me?.name?.replace(/ \(.*\)$/, '') || '', { req: true })}${field('תפקיד וכשירות המדריך', 'trainer_title', me ? (me.role === 'rep' ? 'נציג מבצע הבנייה' : 'מנהל עבודה') + (me.license ? ', ' + me.license : '') : '')}</div>
+      <div class="grid g2">${field('שם המדריך', 'trainer_name', me?.name?.replace(/ \(.*\)$/, '') || '', { req: true })}${field('תפקיד וכשירות המדריך', 'trainer_title', me ? ({ rep: 'נציג מבצע הבנייה', so: 'ממונה בטיחות' }[me.role] || 'מנהל עבודה') + (me.license ? ', ' + me.license : '') : '')}</div>
       ${select('שפת ההדרכה', 'language', Object.fromEntries(Object.values(LANGS).map(v => [v.he, v.he])), 'עברית')}
-      <p class="small mut">ההדרכה באתר בנייה פנים אל פנים, בשפה שהעובד מבין, בידי בעל מקצוע מתאים. אחרי הפתיחה כל עובד חותם בטלפון, וה-PDF נשמר לבד אחרי כל חתימה.</p>`,
+      <p class="small mut">ההדרכה באתר בנייה פנים אל פנים, בשפה שהעובד מבין, בידי בעל מקצוע מתאים. אחרי הפתיחה כל עובד חותם בטלפון של המדריך, או בטלפון שלו דרך קישור אישי ב-WhatsApp (בלי שם משתמש וסיסמה). ה-PDF נשמר לבד אחרי כל חתימה.</p>`,
     onMount: el => $('[name=kind]', el).addEventListener('change', e => { const t = $('[name=topic]', el); if (!t.value.trim() || Object.values(TOPIC).includes(t.value)) t.value = TOPIC[e.target.value] || ''; }),
     validate: d => !d.topic?.trim() ? 'צריך נושא' : !d.trainer_name?.trim() ? 'צריך שם מדריך' : null });
   if (!v) return;
@@ -387,15 +387,63 @@ function trainingScreen(s, tid) {
       ${t.trainer_sig ? `<div class="small mut">חתימת המדריך:</div><img src="${t.trainer_sig}" alt="חתימת המדריך" class="sigimg">` : ''}</div>
     <div class="card"><div class="dh"><h2>עובדים</h2>${can ? '<button class="btn small ghost" data-neww>＋ עובד חדש</button>' : ''}</div>
       ${list.map(w => { const g = signed.get(w.id), st = workerStatus(w); return `<div class="wrow ${g ? 'lv-ok' : ''}"><div><b>${esc(w.name)}</b>${g ? '' : ' ' + stChip(st)}<div class="small mut">${esc([w.company, w.trade].filter(Boolean).join(' · '))}</div>
-        ${g ? `<div class="small ok-t">✓ חתם ${fmtDT(g.signed_at)}</div>` : ''}</div>
-        ${g ? (g.image ? `<img src="${g.image}" alt="חתימה" class="sigthumb">` : '') : can ? `<button class="btn" data-wsign="${w.id}">חתימה</button>` : ''}</div>`; }).join('') || '<div class="empty">אין עובדים רשומים. מוסיפים עובד חדש, ואז הוא חותם.</div>'}</div>
+        ${g ? `<div class="small ok-t">✓ חתם ${fmtDT(g.signed_at)}</div>` : ''}
+        ${g && g.signed_by_email === VIA_LINK ? '<div class="small mut">נחתם בטלפון של העובד</div>' : ''}${!g && pendLink(t.id, w.id) ? `<div class="small mut">📱 נשלח קישור לטלפון · בתוקף עד ${fmtDT(pendLink(t.id, w.id).expires_at)}</div>` : ''}</div>
+        ${g ? (g.image ? `<img src="${g.image}" alt="חתימה" class="sigthumb">` : '') : can ? `<div class="actions"><button class="btn" data-wsign="${w.id}">חתימה כאן</button><button class="btn ghost" data-wlink="${w.id}" title="העובד חותם בטלפון שלו, בלי שם משתמש וסיסמה">📱 קישור לטלפון שלו</button></div>` : ''}</div>`; }).join('') || '<div class="empty">אין עובדים רשומים. מוסיפים עובד חדש, ואז הוא חותם.</div>'}</div>
     ${can ? `<div class="card"><button class="btn ghost" data-close ${sigs.length ? '' : 'disabled'}>סיום ההדרכה וחתימת המדריך</button><p class="small mut">אחרי הסיום אי אפשר להוסיף חתימות. ה-PDF הסופי נשמר עם חתימת המדריך.</p></div>` : ''}
   </div>`);
   $('[data-pdf]', el)?.addEventListener('click', () => openFile(t.pdf_path));
   $('[data-neww]', el)?.addEventListener('click', () => workerForm(s, null, { after: wid => { render(); setTimeout(() => signWorker(s, t, wid), 300); } }));
   $$('[data-wsign]', el).forEach(b => b.onclick = () => signWorker(s, t, b.dataset.wsign));
+  $$('[data-wlink]', el).forEach(b => b.onclick = () => sendSignLink(s, t, workersOf(s.id).find(w => w.id === b.dataset.wlink)));
+  el.addEventListener('mounted', () => {
+    // חתימות שהגיעו מהטלפונים של העובדים: ה-PDF מתעדכן, והמסך בודק כל 20 שניות כל עוד יש קישורים פתוחים
+    const last = sigs.reduce((m, g) => String(g.signed_at) > m ? String(g.signed_at) : m, '');
+    if (can && sigs.length && (!t.pdf_at || last > String(t.pdf_at))) savePdf(s, t).catch(x => console.warn('pdf', x));
+    if (!can || !list.some(w => !signed.has(w.id) && pendLink(t.id, w.id))) return;
+    const iv = setInterval(async () => {
+      if (!el.isConnected) return clearInterval(iv);
+      if (document.querySelector('.ov')) return;
+      try {
+        const fresh = await db.select('training_signatures', { eq: { training_id: t.id } });
+        if (fresh.length > sigs.length) {
+          clearInterval(iv);
+          const have = new Set((S.data.training_signatures || []).map(g => g.id));
+          (S.data.training_signatures ||= []).push(...fresh.filter(g => !have.has(g.id)));
+          toast('התקבלה חתימה מהטלפון של עובד');
+          if (COUNTS_ANNUAL.includes(t.kind)) await syncSite(s, false);
+          render();
+        }
+      } catch (e) { console.warn(e); }
+    }, 20e3);
+  });
   $('[data-close]', el)?.addEventListener('click', () => closeTraining(s, t));
   return el;
+}
+
+// ===== חתימה בטלפון של העובד: קישור אישי, בלי שם משתמש וסיסמה =====
+const VIA_LINK = 'קישור אישי בטלפון העובד';
+const pendLink = (tid, wid) => (S.data.share_links || []).filter(l => l.kind === 'training' && l.training_id === tid && l.worker_id === wid && !l.revoked_at && !l.used_at && new Date(l.expires_at) > Date.now()).pop();
+async function sendSignLink(s, t, w) {
+  if (!w) return;
+  if (age(w.birth_date) < 18) return toast('אסור להעסיק עובד מתחת לגיל 18', 'bad');
+  const win = w.phone ? window.open('', '_blank') : null;
+  try {
+    const r = await db.rpc('share_link_create', { p_kind: 'training', p_site: s.id, p_hours: 48, p_label: null, p_training: t.id, p_worker: w.id, p_payload: null });
+    S.data.share_links = await db.select('share_links', { order: 'created_at' }).catch(() => S.data.share_links);
+    const url = `${appUrl()}#/t/${r.token}`, until = fmtDT(r.expires_at);
+    const x = { name: w.name, kind: TRAINING_KINDS[t.kind], site: s.name, until };
+    const lang = w.language && w.language !== 'he' && LINK_MSG[w.language] ? w.language : null;
+    const text = [LINK_MSG.he(x), lang ? LINK_MSG[lang](x) : '', url].filter(Boolean).join('\n\n');
+    if (win) { win.location.href = waLink(w.phone, text); toast('נפתח WhatsApp עם הקישור'); }
+    else {
+      try { await navigator.clipboard.writeText(text); } catch { /* אין גישה ללוח */ }
+      await modal({ title: 'קישור לחתימה בטלפון של ' + w.name, ok: null, cancel: 'סגירה',
+        body: `<p class="small">לעובד לא רשום טלפון. ההודעה הועתקה, ואפשר לשלוח אותה בכל דרך:</p><input class="linkbox" dir="ltr" readonly value="${esc(url)}">
+          <div class="actions"><a class="btn wa" href="${esc(waShare(text))}" target="_blank" rel="noopener">שליחה ב-WhatsApp</a></div>` });
+    }
+    render();
+  } catch (e) { win?.close?.(); toast(e.message, 'bad'); }
 }
 
 const statement = (s, t, w) => `אני, ${w.name}, ${w.id_type === 'passport' ? 'דרכון' : 'ת"ז'} ${w.id_number}, מאשר/ת שהיום, ${new Date().toLocaleDateString('he-IL')}, קיבלתי ${TRAINING_KINDS[t.kind]} באתר ${s.name}, בנושא: ${t.topic}. ההדרכה ניתנה פנים אל פנים בידי ${t.trainer_name}, בשפה שאני מבין/ה (${t.language || '—'}), והבנתי אותה.`;

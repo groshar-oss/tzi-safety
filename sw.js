@@ -1,6 +1,6 @@
 // Service worker: שומר את קבצי המערכת כדי שתיפתח גם בלי קליטה. הנתונים נשמרים בנפרד (js/offline.js).
-const V = 'safety-v19';
-const FILES = ['./', 'index.html', 'css/app.css?v=13', 'js/app.js', 'manifest.json', 'icons/icon-192.png', 'icons/tzi-logo-on-dark.svg', 'icons/tzi-logo-color.svg'];
+const V = 'safety-v20';
+const FILES = ['./', 'index.html', 'css/app.css?v=14', 'js/app.js', 'manifest.json', 'icons/icon-192.png', 'icons/tzi-logo-on-dark.svg', 'icons/tzi-logo-color.svg'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V && k !== 'tzi-cdn').map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {

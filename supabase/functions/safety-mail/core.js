@@ -1,6 +1,7 @@
 // בניית המיילים של מערכת הבטיחות: התראה מיידית על חריגה קריטית, סיכום בוקר לכל אחראי, דוח שבועי ליזם.
 // קובץ בלי תלות בשרת, כדי שאפשר לבדוק אותו גם מחוץ ל-Supabase. duties.js הוא עותק של js/duties.js (sync-mail.sh)
 import { level, recipients, leftText, LEVELS, ROLES, EVENTS } from './duties.js';
+import { siteMonth, monthsBack, monthName, TREND_ROWS, arrow } from './monthly.js';
 
 export const APP = 'https://safety.tzi-eng.co.il/';
 const TZ = 'Asia/Jerusalem';
@@ -164,6 +165,39 @@ export function weeklyMails(data, now = Date.now()) {
   return out;
 }
 
+// ===== 4. דוח חודשי ליזם: ב-1 לכל חודש, החודש שעבר מול החודש שלפניו =====
+export function monthlyMails(data, now = Date.now()) {
+  const { day } = israelNow(now);
+  const [prev2, prev] = monthsBack(day.slice(0, 7), 3).slice(0, 2);
+  const sites = data.sites.filter(s => !s.demo && !['planning'].includes(s.status));
+  const by = new Map();
+  for (const s of sites) for (const p of data.site_people.filter(p => p.site_id === s.id && p.role === 'dev' && p.active !== false)) {
+    const e = mailOf(p); if (!e) continue; if (!by.has(e)) by.set(e, { name: p.name, sites: [] }); if (!by.get(e).sites.includes(s)) by.get(e).sites.push(s);
+  }
+  const out = [];
+  for (const [email, b] of by) {
+    const cards = b.sites.map(s => {
+      const c = siteMonth(data, s.id, prev), p = siteMonth(data, s.id, prev2);
+      if (!c.workDays && !c.defNew && !c.dutiesDone && !c.accidents && !c.bakar) return '';
+      return `<div style="border:1px solid #e3e6ee;border-radius:8px;padding:12px;margin:12px 0">
+        <div style="font-size:16px;font-weight:bold">${esc(s.name)}</div>
+        <table style="width:100%;border-collapse:collapse;margin:8px 0;font-size:13px" dir="rtl">
+          <tr style="color:#7a8297"><td></td><td style="padding:3px 6px">${esc(monthName(prev2))}</td><td style="padding:3px 6px"><b>${esc(monthName(prev))}</b></td><td></td></tr>
+          ${TREND_ROWS.map(([l, k, g]) => { const a = arrow(c[k], p[k], g); return `<tr style="border-top:1px solid #f0f1f5"><td style="padding:3px 6px">${esc(l)}</td><td style="padding:3px 6px;color:#7a8297">${p[k] ?? '—'}</td><td style="padding:3px 6px"><b>${c[k] ?? '—'}</b></td><td style="padding:3px 6px;color:${/שיפור/.test(a) ? '#13804a' : '#c62828'}">${a}</td></tr>`; }).join('')}
+        </table>
+        ${c.byResp.length ? `<div style="font-size:13px;color:#444">ליקויים לפי אחראי: ${c.byResp.slice(0, 6).map(r => `${esc(r.name)}: ${r.created} נפתחו, ${r.closed} תוקנו${r.late ? `, <b style="color:#c62828">${r.late} באיחור</b>` : ''}`).join(' · ')}</div>` : ''}
+      </div>`;
+    }).filter(Boolean);
+    if (!cards.length) continue;
+    const first = String(b.name || '').replace(/ \(.*\)$/, '').split(' ')[0];
+    const inner = `<p style="margin:0">שלום${first ? ' ' + esc(first) : ''}, זה סיכום הבטיחות של ${esc(monthName(prev))} באתרים שלך, מול החודש שלפניו. הדוח המלא עם מגמה של חצי שנה נמצא במערכת, בכפתור "דוח חודשי" במסך האתר.</p>${cards.join('')}`;
+    out.push({ kind: 'monthly', key: `monthly:${email}:${prev}`, to: [email], cc: [], subject: `דוח בטיחות חודשי: ${monthName(prev)}`,
+      html: wrap('דוח בטיחות חודשי ליזם', inner, 'דוח חודשי אוטומטי ממערכת ניהול הבטיחות של צי הנדסה. נשלח לנציג היזם הרשום באתר ב-1 לכל חודש.'),
+      text: `סיכום הבטיחות של ${monthName(prev)}: ${b.sites.map(s => s.name).join(', ')}. ${APP}` });
+  }
+  return out;
+}
+
 // מה לשלוח עכשיו. מפעילים כל 15 דקות: התראות (אירוע בכל שעה, השאר ביום), סיכום בוקר מ-07:00 בימים א'-ו', דוח שבועי ביום ראשון מ-07:00
 export function plan(data, now = Date.now(), opts = {}) {
   const t = israelNow(now);
@@ -173,5 +207,6 @@ export function plan(data, now = Date.now(), opts = {}) {
   const out = alertMails(data, now).filter(m => day || m.event);
   if ((morning && t.dow !== 6) || opts.forceDigest) out.push(...digestMails(data, now));
   if ((morning && t.dow === 0) || opts.forceWeekly) out.push(...weeklyMails(data, now));
+  if ((morning && t.day.endsWith('-01')) || opts.forceMonthly) out.push(...monthlyMails(data, now));
   return out;
 }
