@@ -449,3 +449,27 @@ details summary{cursor:pointer;font-size:13px;font-weight:600;margin-top:8px}
 .todo-box > .small + .small{margin-top:6px}
 
 .ocr-st{margin-top:6px;line-height:1.5}.ocr-st:empty{display:none}.ocr-st.ok{color:var(--ok,#13804a)}.ocr-st.warn{color:#9a5b00}
+/* ===== חבילה 1.8: עמודים בלי כניסה, בדיקה יומית לציוד, תוכנית בטיחות ===== */
+.pub{max-width:900px;margin:0 auto;padding:16px}
+.pub-brand{display:flex;align-items:center;gap:10px;margin:4px 0 14px}.pub-brand img{height:34px}.pub-brand span{color:var(--mut);font-size:13px}
+.pub-head h1{margin:0 0 2px;font-size:22px}.pub-msg{text-align:center;padding:28px 16px}.pub-msg.ok h2{margin:6px 0}
+.big-ok{font-size:56px;line-height:1;color:var(--gi)}.pub-foot{margin:8px 4px 24px}
+.pub-sign .signname{font-size:24px;font-weight:700}.pub-sign .kv{margin:10px 0}
+.chk.big{font-size:16px;padding:10px 0;display:flex;gap:8px;align-items:center}.chk.big input{width:22px;height:22px;min-height:0}
+.linkbox{font-size:13px;margin:6px 0 10px}
+.dc-list{margin:6px 0}.dc-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.dc-opt{display:flex;gap:6px;flex-shrink:0}.dc-opt label{display:flex;align-items:center;gap:4px;border:1px solid var(--line2);border-radius:8px;padding:6px 10px;cursor:pointer;white-space:nowrap}
+.dc-opt input{width:18px;height:18px;min-height:0;margin:0}
+.dc-opt label:has(input[value=ok]:checked){background:#e6f4ea;border-color:#13804a}.dc-opt label:has(input[value=bad]:checked){background:#fdecea;border-color:#c62828}
+.pe-part{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:10px 0}.pe-part summary{cursor:pointer;padding:2px 0}
+.pe-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px 10px;align-items:end;border:1px dashed var(--line2);border-radius:8px;padding:8px;margin:8px 0;position:relative}
+.pe-row [data-delrow]{justify-self:start}
+.sgdoc.pre,.pre{white-space:pre-line}
+@media (max-width:640px){.dc-row{flex-direction:column;align-items:stretch}.dc-opt label{flex:1;justify-content:center;padding:10px}}
+@media print{.noprint,.netpill{display:none!important}.pub{max-width:none;padding:0}.card{box-shadow:none;break-inside:avoid}}
+
+/* דוח חודשי: טבלת מגמה נגללת לצד בטלפון, עמודת השורה קבועה */
+.trend-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tbl.trend{min-width:560px}.tbl.trend th,.tbl.trend td{white-space:nowrap;text-align:center}
+.tbl.trend td:first-child,.tbl.trend th:first-child{position:sticky;right:0;background:var(--card);text-align:right;z-index:1}
+@media (max-width:700px){.mkpis{grid-template-columns:repeat(2,1fr)!important}.mkpis .kpi{padding:10px}}

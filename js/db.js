@@ -8,8 +8,8 @@ const LOCAL_KEY = 'grosher-safety-demo-v1';
 export const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
   const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
 
-const TABLES = ['orgs', 'memberships', 'sites', 'site_orgs', 'site_people', 'duties', 'events', 'notifications', 'files', 'audit_log', 'checkins', 'notices', 'signatures', 'workers', 'trainings', 'training_signatures', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports'];
-const AUDITED = ['orgs', 'memberships', 'sites', 'site_orgs', 'site_people', 'duties', 'events', 'notices', 'workers', 'trainings', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports'];
+const TABLES = ['orgs', 'memberships', 'sites', 'site_orgs', 'site_people', 'duties', 'events', 'notifications', 'files', 'audit_log', 'checkins', 'notices', 'signatures', 'workers', 'trainings', 'training_signatures', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'equipment_checks', 'safety_plans', 'share_links'];
+const AUDITED = ['orgs', 'memberships', 'sites', 'site_orgs', 'site_people', 'duties', 'events', 'notices', 'workers', 'trainings', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'equipment_checks', 'safety_plans'];
 
 function match(row, q = {}) {
   for (const [k, v] of Object.entries(q.eq || {})) if (String(row[k] ?? '') !== String(v ?? '')) return false;
@@ -41,7 +41,7 @@ class LocalDB {
     this.user = { id: 'demo-user', email: 'demo@grosher.local' };
     return this.user;
   }
-  reset() { this.data = { tables: demoData(uuid), role: this.data?.role || 'admin' }; this.save(); }
+  reset() { this.data = { tables: demoData(uuid), role: this.data?.role || 'admin' }; for (const t of TABLES) this.data.tables[t] ||= []; this.save(); }
   save() { store(LOCAL_KEY, this.data); }
   get role() { return this.data.role; }
   setRole(r) { this.data.role = r; this.save(); }
@@ -69,7 +69,7 @@ class LocalDB {
     Object.assign(row, patch); this.audit(table, 'update', row, old); this.save(); return { ...row };
   }
   async remove(table, id) {
-    if (['duties', 'audit_log', 'notifications', 'notices', 'signatures', 'workers', 'trainings', 'training_signatures', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports'].includes(table)) throw new Error('אי אפשר למחוק רשומה זו. אפשר לסגור אותה עם נימוק.');
+    if (['duties', 'audit_log', 'notifications', 'notices', 'signatures', 'workers', 'trainings', 'training_signatures', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'equipment_checks', 'safety_plans', 'share_links'].includes(table)) throw new Error('אי אפשר למחוק רשומה זו. אפשר לסגור אותה עם נימוק.');
     const row = this.data.tables[table].find(r => r.id === id);
     this.data.tables[table] = this.data.tables[table].filter(r => r.id !== id);
     if (row) this.audit(table, 'delete', row, { ...row });
@@ -77,6 +77,58 @@ class LocalDB {
   }
   async signOut() {}
   async flush() { return 0; }
+  // קישורים בלי כניסה במצב הדגמה: אותה התנהגות כמו הפונקציות בשרת (field18.sql)
+  async rpc(name, a) { return demoRpc(this, name, a); }
+  async signedUrls() { return {}; }
+}
+
+const HOUR = 36e5;
+function demoRpc(L, name, a) {
+  const T = L.data.tables, now = new Date(), iso = now.toISOString();
+  const link = (tok, kind) => T.share_links.find(r => r.token_hash === 'demo:' + tok && r.kind === kind);
+  const bad = m => { throw new Error(m || 'הקישור לא בתוקף. צריך לבקש קישור חדש'); };
+  if (name === 'share_link_create') {
+    const tok = uuid().replace(/-/g, '') + uuid().replace(/-/g, '');
+    let hours = a.p_hours;
+    if (a.p_kind === 'training') {
+      if (T.training_signatures.some(g => g.training_id === a.p_training && g.worker_id === a.p_worker)) bad('העובד כבר חתם על ההדרכה');
+      hours = Math.min(Math.max(hours || 48, 1), 72);
+      T.share_links.filter(r => r.kind === 'training' && r.training_id === a.p_training && r.worker_id === a.p_worker && !r.revoked_at && !r.used_at).forEach(r => { r.revoked_at = iso; });
+    }
+    const r = { id: uuid(), site_id: a.p_site, kind: a.p_kind, token_hash: 'demo:' + tok, label: a.p_label || null, training_id: a.p_training || null, worker_id: a.p_worker || null,
+      payload: a.p_kind === 'inspector' ? a.p_payload || null : null, payload_at: a.p_payload ? iso : null, expires_at: new Date(+now + hours * HOUR).toISOString(),
+      revoked_at: null, used_at: null, opened_at: null, open_count: 0, created_by_email: window.__actor || 'demo', created_at: iso };
+    T.share_links.push(r); L.save();
+    return { id: r.id, token: tok, expires_at: r.expires_at };
+  }
+  if (name === 'share_link_snapshot') { const r = T.share_links.find(x => x.id === a.p_id); if (!r || r.revoked_at || new Date(r.expires_at) < now) return null; Object.assign(r, { payload: a.p_payload, payload_at: iso }); L.save(); return iso; }
+  if (name === 'share_link_revoke') { const r = T.share_links.find(x => x.id === a.p_id); if (r && !r.revoked_at) Object.assign(r, { revoked_at: iso, payload: null }); L.save(); return null; }
+  if (name === 'share_inspector') {
+    const r = link(a.p_token, 'inspector'); if (!r || r.revoked_at || new Date(r.expires_at) < now) bad('הקישור לא בתוקף. אפשר לבקש קישור חדש מהאתר');
+    r.opened_at ||= iso; r.open_count++; L.save();
+    return { site: T.sites.find(s => s.id === r.site_id)?.name, label: r.label, expires_at: r.expires_at, payload: r.payload, payload_at: r.payload_at };
+  }
+  if (name === 'share_training' || name === 'share_training_sign') {
+    const r = link(a.p_token, 'training'); if (!r || r.revoked_at) bad();
+    const t = T.trainings.find(x => x.id === r.training_id), w = T.workers.find(x => x.id === r.worker_id), s = T.sites.find(x => x.id === r.site_id);
+    const g = T.training_signatures.find(x => x.training_id === t.id && x.worker_id === w.id);
+    if (name === 'share_training') {
+      if (!g && (new Date(r.expires_at) < now || t.closed_at)) bad();
+      r.opened_at ||= iso; r.open_count++; L.save();
+      return { site: s.name, expires_at: r.expires_at, training: { kind: t.kind, topic: t.topic, trainer_name: t.trainer_name, trainer_title: t.trainer_title, language: t.language, held_at: t.held_at },
+        worker: { name: w.name, id_type: w.id_type, id_masked: '•'.repeat(Math.max(w.id_number.length - 3, 0)) + w.id_number.slice(-3), language: w.language }, signed_at: g?.signed_at || null };
+    }
+    if (r.used_at || g || new Date(r.expires_at) < now || t.closed_at) bad();
+    if (!/^data:image\/png;base64,/.test(a.p_image || '')) bad('החתימה לא נקלטה. צריך לחתום שוב');
+    const KH = { intro: 'הדרכה לעובד חדש לפני תחילת עבודה', annual: 'הדרכת בטיחות שנתית', height: 'הדרכה לעבודה בגובה', toolbox: 'תדריך בטיחות (שיחת בוקר)', other: 'הדרכה אחרת' };
+    const statement = `אני, ${w.name}, ${w.id_type === 'passport' ? 'דרכון' : 'ת"ז'} ${w.id_number}, מאשר/ת שהיום, ${now.toLocaleDateString('he-IL')}, קיבלתי ${KH[t.kind] || KH.other} באתר ${s.name}, בנושא: ${t.topic}. ההדרכה ניתנה פנים אל פנים בידי ${t.trainer_name}, בשפה שאני מבין/ה (${t.language || '—'}), והבנתי אותה. (נחתם בטלפון של העובד דרך קישור אישי)`;
+    const row = { id: uuid(), created_at: iso, training_id: t.id, site_id: s.id, worker_id: w.id, worker_name: w.name, statement, image: a.p_image,
+      statement_local: a.p_local && a.p_lang ? a.p_local.replace('{{ID}}', w.id_number) : null, lang: a.p_local ? a.p_lang : null,
+      signed_at: iso, client_signed_at: a.p_client_at || null, signed_by_email: 'קישור אישי בטלפון העובד', user_agent: (a.p_ua || '').slice(0, 300) };
+    T.training_signatures.push(row); r.used_at = iso; L.audit('training_signatures', 'insert', row); L.save();
+    return { signed_at: iso };
+  }
+  throw new Error('rpc ' + name);
 }
 
 // קבצים במצב הדגמה: IndexedDB בדפדפן
@@ -202,6 +254,13 @@ class CloudDB {
   async rpc(name, args) {
     const { data, error } = await this.sb.rpc(name, args);
     if (error) throw dbErr(error); return data;
+  }
+  // קישורים חתומים לקבצים, לצפייה בלי כניסה (קישור המפקח). path ← url
+  async signedUrls(paths, seconds) {
+    const list = [...new Set(paths.filter(Boolean))]; if (!list.length) return {};
+    const { data, error } = await this.sb.storage.from('files').createSignedUrls(list, Math.max(60, Math.floor(seconds)));
+    if (error) throw dbErr(error);
+    return Object.fromEntries((data || []).filter(x => x.signedUrl).map(x => [x.path, x.signedUrl]));
   }
 }
 

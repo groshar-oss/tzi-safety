@@ -67,3 +67,16 @@ export function reminderText(code, kind, { name, date, site }) {
   const c = REM[code] && code !== 'he' ? code : null;
   return c ? he + '\n\n' + REM[c]({ name, doc: DOC[c][kind], date, site }) : he;
 }
+
+// חתימה על הדרכה בטלפון של העובד, דרך קישור אישי
+export const LINK_MSG = {
+  he: x => `שלום ${x.name}, זה קישור אישי לחתימה על ${x.kind} באתר ${x.site}. פותחים, קוראים וחותמים באצבע. הקישור בתוקף עד ${x.until}.`,
+  ar: x => `مرحباً ${x.name}، هذا رابط شخصي للتوقيع على التدريب في موقع ${x.site}. افتح الرابط، اقرأ ووقّع بإصبعك. الرابط صالح حتى ${x.until}.`,
+  ru: x => `Здравствуйте, ${x.name}! Это личная ссылка для подписи об инструктаже на объекте ${x.site}. Откройте, прочитайте и подпишите пальцем. Ссылка действует до ${x.until}.`,
+  th: x => `สวัสดี ${x.name} นี่คือลิงก์ส่วนตัวสำหรับลงนามรับการอบรมที่ไซต์ ${x.site} เปิดลิงก์ อ่าน แล้วลงนามด้วยนิ้ว ลิงก์ใช้ได้ถึง ${x.until}`,
+  ro: x => `Bună ziua, ${x.name}! Acesta este un link personal pentru semnarea instruirii pe șantierul ${x.site}. Deschideți, citiți și semnați cu degetul. Linkul este valabil până la ${x.until}.`,
+  zh: x => `${x.name}您好，这是您在${x.site}工地签署培训确认的个人链接。请打开、阅读并用手指签名。链接有效期至${x.until}。`,
+  en: x => `Hello ${x.name}, this is your personal link to sign for the training at the ${x.site} site. Open it, read and sign with your finger. The link is valid until ${x.until}.`
+};
+export const READ_OK = { he: 'קראתי והבנתי', ar: 'قرأت وفهمت', ru: 'Я прочитал(-а) и понял(-а)', th: 'ข้าพเจ้าอ่านและเข้าใจแล้ว', ro: 'Am citit și am înțeles', zh: '我已阅读并理解', en: 'I have read and understood' };
+export const SIGNED_OK = { he: 'החתימה נשמרה. תודה! אפשר לסגור את הדף.', ar: 'تم حفظ التوقيع. شكراً! يمكنك إغلاق الصفحة.', ru: 'Подпись сохранена. Спасибо! Страницу можно закрыть.', th: 'บันทึกลายเซ็นแล้ว ขอบคุณ! ปิดหน้านี้ได้เลย', ro: 'Semnătura a fost salvată. Mulțumim! Puteți închide pagina.', zh: '签名已保存。谢谢！可以关闭此页面。', en: 'Your signature was saved. Thank you! You can close this page.' };

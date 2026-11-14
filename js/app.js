@@ -14,6 +14,8 @@ import { viewSettings } from './views/settings.js';
 import { viewField, isFieldUser } from './views/field.js';
 import { syncExpiry } from './workers.js';
 import { viewOverview, showOverview } from './views/overview.js';
+import { publicRoute, renderPublic } from './views/public.js';
+import { refreshInspectorLinks } from './views/inspect.js';
 
 export const S = { user: null, ctx: null, data: null };
 
@@ -69,10 +71,14 @@ export async function loadAll() {
   const defects = await db.select('defects', { order: 'created_at' }).catch(() => []);
   // דוחות ביקור בקר ותיעוד תאונות (חבילה 1.7 שלב ב)
   const [bakar_reports, accident_reports] = await Promise.all(['bakar_reports', 'accident_reports'].map(t => db.select(t, { order: 'created_at' }).catch(() => [])));
-  S.data = { orgs, sites, site_orgs, site_people, duties, events, notifications, checkins, notices, signatures, workers, trainings, training_signatures, equipment, inspections, attendance, worker_exemptions, site_inspections, defects, bakar_reports, accident_reports };
+  // בדיקה יומית לציוד, תוכנית בטיחות וקישורים בלי כניסה (חבילה 1.8)
+  const [equipment_checks, safety_plans, share_links] = await Promise.all(['equipment_checks', 'safety_plans', 'share_links'].map(t => db.select(t, { order: 'created_at' }).catch(() => [])));
+  S.data = { orgs, sites, site_orgs, site_people, duties, events, notifications, checkins, notices, signatures, workers, trainings, training_signatures, equipment, inspections, attendance, worker_exemptions, site_inspections, defects, bakar_reports, accident_reports, equipment_checks, safety_plans, share_links };
   // סנכרון החובות מול הפרופיל של כל אתר (חובה חוזרת שבוצעה פותחת את הבאה)
   for (const s of sites) await syncSite(s, false);
   if (isCloud()) { saveSnap(S.user?.email, S.ctx, S.data); net.offline = false; }
+  // קישורי המפקח מתעדכנים ברקע, כדי שהמפקח יראה מצב עדכני
+  setTimeout(() => refreshInspectorLinks().catch(e => console.warn('share', e)), 4000);
   return S.data;
 }
 export async function syncSite(site, reload = true) {
@@ -99,7 +105,7 @@ export const conNames = siteId => { const o = siteOrgs(siteId, 'contractor').map
 export const siteOrgs = (siteId, kind) => S.data.site_orgs.filter(x => x.site_id === siteId && (!kind || x.kind === kind)).map(x => S.data.orgs.find(o => o.id === x.org_id)).filter(Boolean);
 
 // מסך השטח זמין למי שיש לו תפקיד שטח באתר כלשהו (או מנהל השירות)
-export const canField = () => visibleSites().some(s => myRoles(s.id).some(r => ['admin', 'con', 'wm', 'rep'].includes(r)));
+export const canField = () => visibleSites().some(s => myRoles(s.id).some(r => ['admin', 'con', 'wm', 'rep', 'so'].includes(r)));
 
 // ===== ניווט =====
 const NAV = () => [
@@ -205,6 +211,9 @@ async function newPassword() {
 }
 
 export async function boot() {
+  // קישור בלי כניסה: מפקח עבודה או עובד שחותם על הדרכה
+  const pub = publicRoute();
+  if (pub) return renderPublic(pub);
   try {
     S.user = await db.init();
     if (!S.user) return render();
@@ -276,7 +285,7 @@ setInterval(() => { if (net.pending || net.offline) syncNow(); }, 45e3);
 
 export { level };
 const theme = store('safety-theme'); if (theme) document.documentElement.dataset.theme = theme;
-window.addEventListener('hashchange', render);
+window.addEventListener('hashchange', () => { if (publicRoute()) boot(); else render(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 // רענון כל 5 דקות כדי שהשעונים וההתראות יתעדכנו גם כשהמסך פתוח
 setInterval(() => { if (S.user && !document.querySelector('.ov')) render(); }, 5 * 60e3);

@@ -15,22 +15,25 @@ import { tabRecurring } from './recurring.js';
 import { tabInspect, canInspect } from './inspect.js';
 import { tabDefects, defectSummary, defectsOf, SEV } from './defects.js';
 import { accidentForm, accidentOf, canAccident } from './reports.js';
+import { tabPlan } from './plan.js';
+import { monthlyReport, canMonthly } from './monthly.js';
 import { TRAINING_KINDS, sigsOfTraining, equipmentOf, headcount, renderPdfPages, pagesToPdf } from '../workers.js';
 
-const TABS = [['overview', 'סקירה'], ['recurring', 'משימות חוזרות'], ['workers', 'עובדים והדרכות'], ['equipment', 'ציוד ותסקירים'], ['defects', 'ליקויים'], ['duties', 'חובות'], ['events', 'אירועים'], ['people', 'בעלי תפקידים'], ['log', 'פנקס כללי'], ['audit', 'יומן ביקורת']];
+const TABS = [['overview', 'סקירה'], ['recurring', 'משימות חוזרות'], ['workers', 'עובדים והדרכות'], ['equipment', 'ציוד ותסקירים'], ['defects', 'ליקויים'], ['plan', 'תוכנית בטיחות'], ['duties', 'חובות'], ['events', 'אירועים'], ['people', 'בעלי תפקידים'], ['log', 'פנקס כללי'], ['audit', 'יומן ביקורת']];
 
 export function viewSite(id, tab = 'overview', c, d) {
   const s = siteById(id);
   if (!s || !myRoles(id).length) return h('<div class="card empty">האתר לא נמצא או שאין לך גישה אליו</div>');
-  const body = tab === 'inspect' ? tabInspect(s) : tab === 'workers' ? tabWorkers(s, c, d) : tab === 'equipment' ? tabEquipment(s, c) : tab === 'defects' ? tabDefects(s, c) : tab === 'recurring' ? tabRecurring(s) : tab === 'duties' ? tabDuties(s, c) : tab === 'events' ? tabEvents(s) : tab === 'people' ? tabPeople(s) : tab === 'audit' ? tabAudit(s) : tab === 'log' ? tabLog(s) : tabOverview(s);
+  const body = tab === 'inspect' ? tabInspect(s) : tab === 'workers' ? tabWorkers(s, c, d) : tab === 'equipment' ? tabEquipment(s, c) : tab === 'defects' ? tabDefects(s, c) : tab === 'plan' ? tabPlan(s) : tab === 'recurring' ? tabRecurring(s) : tab === 'duties' ? tabDuties(s, c) : tab === 'events' ? tabEvents(s) : tab === 'people' ? tabPeople(s) : tab === 'audit' ? tabAudit(s) : tab === 'log' ? tabLog(s) : tabOverview(s);
   const el = h(`<div><div class="top"><div><h1>${esc(s.name)}</h1><div class="sub">${esc(s.address || '')} · ${esc(WORK_TYPES[s.profile?.work_type] || '')} · <span class="chip">${esc(statusName(s.status))}</span></div></div>
-    <div class="actions">${canInspect(s.id) ? `<a class="btn ${tab === 'inspect' ? '' : 'ghost'}" href="#/site/${s.id}/inspect">ביקורת באתר</a>` : ''}${canReport(s.id) ? '<button class="btn" data-ev>דיווח אירוע</button>' : ''}<button class="btn ghost" data-sign>שלט אתר</button>${hasRole(s.id, 'dev') ? `<a class="btn ghost" href="#/new-site/${s.id}">פרופיל משפטי</a>` : ''}</div></div>
+    <div class="actions">${canInspect(s.id) ? `<a class="btn ${tab === 'inspect' ? '' : 'ghost'}" href="#/site/${s.id}/inspect">ביקורת באתר</a>` : ''}${canReport(s.id) ? '<button class="btn" data-ev>דיווח אירוע</button>' : ''}<button class="btn ghost" data-sign>שלט אתר</button>${canMonthly(s.id) ? '<button class="btn ghost" data-month>דוח חודשי</button>' : ''}${hasRole(s.id, 'dev') ? `<a class="btn ghost" href="#/new-site/${s.id}">פרופיל משפטי</a>` : ''}</div></div>
     <nav class="tabs">${TABS.filter(([k]) => k !== 'workers' || canSeeWorkers(s.id)).map(([k, l]) => `<a href="#/site/${s.id}/${k}" class="${k === tab ? 'on' : ''}">${l}</a>`).join('')}</nav>
     <div id="tabBody"></div></div>`);
   $('#tabBody', el).appendChild(body);
   $('[data-ev]', el)?.addEventListener('click', () => eventForm(s));
   $('[data-ev2]', el)?.addEventListener('click', () => eventForm(s));
   $('[data-sign]', el)?.addEventListener('click', () => siteSign(s));
+  $('[data-month]', el)?.addEventListener('click', () => monthlyReport(s));
   el.addEventListener('mounted', () => body.dispatchEvent(new Event('mounted')));
   // קישור ישיר לחובה: #/site/{id}/duties/{dutyId}
   if (tab === 'duties' && c && S.data.duties.some(x => x.id === c)) el.addEventListener('mounted', () => { if (!document.querySelector('.ov')) openDuty(c); });

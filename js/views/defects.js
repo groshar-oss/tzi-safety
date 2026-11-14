@@ -6,7 +6,7 @@ import { shrinkImage, workersOf } from '../workers.js';
 import { fmtDT } from './common.js';
 
 export const SEV = { crit: ['red', 'סיכון מיידי', 0], high: ['amber', 'חמור', 2], normal: ['', 'רגיל', 7] };
-export const SRC = { checkin: 'צ׳ק-אין יומי', so: 'סיור ממונה בטיחות', bakar: 'ביקור בקר בטיחות', sm: 'בקרת מנהל אתר', inspector: 'ביקורת מפקח עבודה', other: 'אחר' };
+export const SRC = { checkin: 'צ׳ק-אין יומי', so: 'סיור ממונה בטיחות', bakar: 'ביקור בקר בטיחות', sm: 'בקרת מנהל אתר', inspector: 'ביקורת מפקח עבודה', equipment: 'בדיקה יומית לציוד', other: 'אחר' };
 export const canAddDefect = siteId => hasRole(siteId, 'dev', 'bakar', 'con', 'so', 'sm', 'wm', 'rep');
 export const canCloseDefect = siteId => hasRole(siteId, 'con', 'so', 'sm', 'wm', 'rep');
 const DAY = 864e5;
@@ -112,6 +112,9 @@ async function fixForm(s, d) {
     await db.putFile(path, f);
     const r = await db.update('defects', d.id, { after_path: path, fix_note: v.fix_note.trim(), closed_at: new Date().toISOString() });
     Object.assign(d, r);
+    // ציוד שנעצר בגלל הליקוי הזה חוזר לשימוש
+    const eq = (S.data.equipment || []).find(e => e.stop_use && e.stop_defect_id === d.id);
+    if (eq) { try { const x = await db.update('equipment', eq.id, { stop_use: false, stop_defect_id: null, stop_reason: null, stop_at: null }); Object.assign(eq, x); toast(`הליקוי נסגר, ו${eq.name} חזר לשימוש`); render(); return; } catch (x) { toast('הליקוי נסגר, אבל החזרת הציוד לשימוש נכשלה: ' + x.message, 'bad'); } }
     toast('הליקוי נסגר'); render();
   } catch (e) { toast(e.message, 'bad'); }
 }

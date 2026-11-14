@@ -1,11 +1,12 @@
 // ביקורת באתר: מסך אחד שמרכז את כל מה שמבקר רוצה לראות, הודעה לבעלי התפקידים (WhatsApp / מייל) וייצוא PDF
 import { defectsOf, SEV, isLate } from './defects.js';
-import { db } from '../db.js';
+import { db, isCloud } from '../db.js';
+import { net } from '../offline.js';
 import { S, hasRole, siteOrgs, render, conNames } from '../app.js';
 import { derive, ROLES, WORK_TYPES, EVENTS, LEVELS, gateStatus } from '../duties.js';
-import { exceptions, waLink, mailtoLink, appUrl } from '../alerts.js';
+import { exceptions, waLink, waShare, mailtoLink, appUrl } from '../alerts.js';
 import { gReady, gmailSend } from '../google.js';
-import { esc, h, $, $$, toast, modal, field, select, fmtDate } from '../util.js';
+import { esc, h, $, $$, toast, modal, field, select, fmtDate, confirmBox } from '../util.js';
 import { compliance, fmtDT, openFile } from './common.js';
 import { checkinsFor } from './checkin.js';
 import { statusName } from './home.js';
@@ -20,7 +21,7 @@ const today = () => israelDay();
 const ROLE_ORDER = ['dev', 'bakar', 'con', 'sm', 'wm', 'rep', 'so', 'fa'];
 
 // כל הנתונים לביקורת, בפורמט אחד שמשמש גם את המסך וגם את ה-PDF
-function sections(s) {
+export function sections(s, { pub = false } = {}) {
   const out = [];
   const dv = derive(s.profile || {});
   const duties = S.data.duties.filter(d => d.site_id === s.id);
@@ -49,7 +50,7 @@ function sections(s) {
     out.push({ title: `עובדים (${ws.length}) · באתר היום: ${present.length}`, type: 'table', workers: true,
       cols: [['שם', 0.16], ['תעודה', 0.13], ['חברה · מקצוע', 0.16], ['סטטוס', 0.15], ['הדרכה אחרונה', 0.11], ['עבודה בגובה', 0.11], ['היתר עובד זר', 0.1], ['היום', 0.08]],
       rows: ws.map(w => { const st = workerStatus(w), la = lastAnnual(w), hx = heightExemption(w);
-        return [w.name, (w.id_type === 'passport' ? 'דרכון ' : 'ת"ז ') + w.id_number, [w.company, w.trade].filter(Boolean).join(' · '),
+        return [w.name, (w.id_type === 'passport' ? 'דרכון ' : 'ת"ז ') + (pub ? maskId(w.id_number) : w.id_number), [w.company, w.trade].filter(Boolean).join(' · '),
           st.lv === 'bad' ? 'אסור להעסיק: ' + st.issues.join(', ') : st.lv === 'warn' ? 'פג בקרוב: ' + st.issues.join(', ') : 'מותר לעבוד',
           la ? fmtDate(la) : 'לא הודרך', hx ? 'הוחרג באישור' : w.height ? 'עד ' + fmtDate(w.height_until) : 'אין', w.foreign_worker ? 'עד ' + fmtDate(w.permit_until) : '—', isPresent(w.id) ? 'באתר' : '']; }), empty: 'לא נרשמו עובדים' });
     const trs = trainingsOf(s.id).slice(0, 12);
@@ -61,10 +62,16 @@ function sections(s) {
     rows: dfs.map(d => [d.title, d.location || '', SEV[d.severity]?.[1] || '', d.responsible || '', fmtDate(d.due_date), d.closed_at ? 'תוקן ' + fmtDate(d.closed_at) : isLate(d) ? 'באיחור' : 'פתוח']),
     files: dfs.map(d => d.after_path || d.before_path), empty: 'אין ליקויים פתוחים' });
   const eq = equipmentOf(s.id).filter(e => e.active !== false);
-  out.push({ title: 'ציוד ותסקירים', type: 'table', cols: [['ציוד', 0.26], ['סוג', 0.22], ['תסקיר אחרון', 0.13], ['בודק', 0.16], ['בתוקף עד', 0.12], ['מצב', 0.11]],
-    rows: eq.map(e => { const li = lastInspection(e.id); const bad = !li || li.next_due < today();
-      return [e.name + (e.ident ? ' ' + e.ident : ''), EQUIP_KINDS[e.kind]?.label || e.kind, li ? fmtDate(li.inspected_at) : '—', li?.inspector || '', li ? fmtDate(li.next_due) : '—', bad ? (li ? 'פג' : 'אין תסקיר') : 'בתוקף']; }),
+  out.push({ title: 'ציוד ותסקירים', type: 'table', cols: [['ציוד', 0.22], ['סוג', 0.18], ['תסקיר אחרון', 0.11], ['בודק', 0.14], ['בתוקף עד', 0.11], ['בדיקה יומית', 0.12], ['מצב', 0.12]],
+    rows: eq.map(e => { const li = lastInspection(e.id); const bad = !li || li.next_due < today(); const dc = lastCheck(e.id);
+      return [e.name + (e.ident ? ' ' + e.ident : ''), EQUIP_KINDS[e.kind]?.label || e.kind, li ? fmtDate(li.inspected_at) : '—', li?.inspector || '', li ? fmtDate(li.next_due) : '—',
+        dc ? fmtDate(dc.day) + (dc.ok ? ' תקין' : ' נכשל') : 'לא נבדק', e.stop_use ? 'אסור להפעיל' : bad ? (li ? 'פג' : 'אין תסקיר') : 'בתוקף']; }),
     files: eq.map(e => lastInspection(e.id)?.cert_path), empty: 'לא נרשם ציוד' });
+  const plans = (S.data.safety_plans || []).filter(p => p.site_id === s.id && p.locked_hash).sort((a, b) => b.version - a.version);
+  const lastPlan = k => plans.find(p => p.kind === k);
+  if (plans.length) out.push({ title: 'תוכנית בטיחות ונספח משאבים', type: 'table', cols: [['מסמך', 0.5], ['גרסה', 0.15], ['נחתם', 0.35]],
+    rows: ['plan', 'resources'].filter(lastPlan).map(k => { const p = lastPlan(k); return [k === 'plan' ? 'תוכנית ארגון בטיחות לאתר (תקנה 166)' : 'נספח משאבים ליישום תוכנית הבטיחות (תקנה 1א(א)(2))', String(p.version), planSigned(p)]; }),
+    files: ['plan', 'resources'].filter(lastPlan).map(k => lastPlan(k).pdf_path) });
   const pre = duties.filter(d => ['pre', 'ongoing'].includes(d.kind) && d.status !== 'na').sort((a, b) => (a.status === 'open') - (b.status === 'open'));
   out.push({ title: 'מסמכים, מינויים ואישורים', type: 'table', cols: [['דרישה', 0.5], ['מצב', 0.2], ['אסמכתה', 0.3]],
     rows: pre.map(d => [d.title, d.status === 'done' ? 'בוצע ' + fmtDate(d.done_at) : d.status === 'waived' ? 'נסגר בנימוק' : 'פתוח', [d.evidence_ref, d.evidence_note].filter(Boolean).join(' · ')]), files: pre.map(d => d.file_path) });
@@ -80,6 +87,74 @@ function sections(s) {
   return out;
 }
 
+const maskId = v => { const x = String(v || ''); return '•'.repeat(Math.max(x.length - 3, 0)) + x.slice(-3); };
+const lastCheck = eid => (S.data.equipment_checks || []).filter(c => c.equipment_id === eid).sort((a, b) => String(b.day).localeCompare(String(a.day)) || String(b.created_at).localeCompare(String(a.created_at)))[0];
+const planSigned = p => { const g = (S.data.signatures || []).filter(x => x.doc_ref === p.id && x.doc_hash === p.locked_hash); return g.map(x => `${x.signer_name} ${fmtDate(x.signed_at)}`).join(' · ') || '—'; };
+
+// הצגת הסעיפים: משמש גם את מסך הביקורת וגם את קישור המפקח. fileCell מחזיר את התא של הקובץ
+export const sectionsHtml = (secs, fileCell) => secs.map((x, i) => `<div class="card"><h3>${esc(x.title)}</h3>${x.type === 'kv' ? `<div class="kv">${x.rows.map(([k, v]) => `<span>${esc(k)}</span><b>${esc(v)}</b>`).join('')}</div>`
+  : x.rows.length ? `<div class="tbl-wrap"><table class="tbl itbl"><thead><tr>${x.cols.map(([c]) => `<th>${esc(c)}</th>`).join('')}${x.files ? '<th></th>' : ''}</tr></thead><tbody>${x.rows.map((r, j) => `<tr>${r.map((v, k) => `<td data-l="${esc(x.cols[k][0])}">${esc(v)}</td>`).join('')}${x.files ? `<td>${fileCell(x.files[j], i, j)}</td>` : ''}</tr>`).join('')}</tbody></table></div>`
+  : `<div class="empty small">${esc(x.empty || 'אין')}</div>`}</div>`).join('');
+
+// ===== קישור צפייה למפקח עבודה =====
+// מה שהמפקח רואה: אותם סעיפים של מסך הביקורת, בלי מספרי תעודה מלאים. קבצים נפתחים בקישור חתום שפג עם הקישור
+export async function inspectorPayload(s, expiresAt) {
+  const secs = sections(s, { pub: true });
+  let urls = {};
+  try { urls = await db.signedUrls(secs.flatMap(x => x.files || []), (new Date(expiresAt) - Date.now()) / 1000 + 3600); } catch (e) { console.warn('signed urls', e); }
+  return { v: 1, secs: secs.map(x => ({ title: x.title, type: x.type, cols: x.cols, rows: x.rows, empty: x.empty, ...(x.files ? { files: x.files.map(p => (p && urls[p]) || null) } : {}) })) };
+}
+const activeLinks = siteId => (S.data.share_links || []).filter(l => l.kind === 'inspector' && (!siteId || l.site_id === siteId) && !l.revoked_at && new Date(l.expires_at) > Date.now());
+const mineOrWorkers = l => canSeeWorkers(l.site_id) || (l.created_by_email || '').toLowerCase() === (S.user?.email || '').toLowerCase() || !isCloud();
+// עדכון תמונת המצב של קישורים פעילים. ברקע: רק אם עברו 20 דקות מהעדכון הקודם
+export async function refreshInspectorLinks(siteId, force = false) {
+  if (!S.data || net.offline) return 0;
+  let n = 0;
+  for (const l of activeLinks(siteId).filter(mineOrWorkers)) {
+    if (!force && l.payload_at && Date.now() - new Date(l.payload_at) < 20 * 6e4) continue;
+    const s = S.data.sites.find(x => x.id === l.site_id); if (!s) continue;
+    const at = await db.rpc('share_link_snapshot', { p_id: l.id, p_payload: await inspectorPayload(s, l.expires_at) });
+    if (at) { l.payload_at = at; n++; }
+  }
+  return n;
+}
+const reloadLinks = async () => { S.data.share_links = await db.select('share_links', { order: 'created_at' }).catch(() => S.data.share_links); };
+const HOURS = { 24: 'יום אחד', 72: '3 ימים', 168: 'שבוע', 336: 'שבועיים', 720: '30 יום' };
+async function newInspectorLink(s) {
+  const v = await modal({ title: 'קישור צפייה למפקח עבודה', ok: 'יצירת קישור',
+    body: `${field('למי הקישור', 'label', '', { attrs: 'placeholder="למשל: מפקח העבודה האזורי, ישראל ישראלי"' })}
+      ${select('בתוקף למשך', 'hours', HOURS, '168')}
+      <p class="small mut">מי שמקבל את הקישור רואה את מסך הביקורת, בלי להיכנס למערכת ובלי לשנות שום דבר: בעלי תפקידים, חריגות, עובדים ותוקפים (בלי מספרי תעודה מלאים), הדרכות, ציוד ותסקירים, ליקויים, מסמכים ופנקס כללי. אפשר לבטל את הקישור בכל רגע.</p>` });
+  if (!v) return;
+  try {
+    toast('מכין את הקישור…');
+    const exp = new Date(Date.now() + +v.hours * 36e5).toISOString();
+    const r = await db.rpc('share_link_create', { p_kind: 'inspector', p_site: s.id, p_hours: +v.hours, p_label: v.label.trim() || null, p_training: null, p_worker: null, p_payload: await inspectorPayload(s, exp) });
+    await reloadLinks(); render();
+    shareDialog(s, `${appUrl()}#/i/${r.token}`, r.expires_at, v.label.trim());
+  } catch (e) { toast(e.message, 'bad'); }
+}
+function shareDialog(s, url, exp, label) {
+  const text = `צפייה במצב הבטיחות באתר ${s.name}${label ? ' (' + label + ')' : ''}. צפייה בלבד, בלי כניסה למערכת. הקישור בתוקף עד ${fmtDT(exp)}:\n${url}`;
+  const el = h(`<div class="ov" role="dialog" aria-modal="true"><div class="dlg"><div class="dlg-h"><h3>הקישור מוכן</h3><button class="x" aria-label="סגירה" data-x>✕</button></div>
+    <div class="dlg-b"><input class="linkbox" dir="ltr" readonly value="${esc(url)}">
+      <div class="actions"><a class="btn wa" href="${esc(waShare(text))}" target="_blank" rel="noopener">שליחה ב-WhatsApp</a><button type="button" class="btn ghost" data-copy>העתקה</button><a class="btn ghost" href="${esc(mailtoLink([], 'צפייה במצב הבטיחות באתר ' + s.name, text))}">מייל</a></div>
+      <p class="small mut">הקישור מוצג רק עכשיו (במערכת נשמרת רק טביעת אצבע שלו). אם צריך אותו שוב, יוצרים קישור חדש.</p></div>
+    <div class="dlg-f"><button class="btn ghost" data-x>סגירה</button></div></div></div>`);
+  document.body.appendChild(el);
+  el.querySelectorAll('[data-x]').forEach(b => b.onclick = () => el.remove());
+  $('[data-copy]', el).onclick = async () => { try { await navigator.clipboard.writeText(url); toast('הקישור הועתק'); } catch { $('.linkbox', el).select(); } };
+}
+function linksCard(s) {
+  const can = hasRole(s.id, 'dev', 'bakar', 'con', 'so', 'sm', 'wm', 'rep');
+  if (!can) return '';
+  const list = activeLinks(s.id);
+  return `<div class="card"><div class="dh"><h3>קישור צפייה למפקח עבודה</h3><button class="btn small" data-newlink>＋ קישור חדש</button></div>
+    <p class="small mut">שולחים למפקח (או לכל מבקר) קישור שמראה את כל מה שבמסך הזה, בלי שם משתמש וסיסמה, לצפייה בלבד ולזמן מוגבל.</p>
+    ${list.map(l => `<div class="wrow"><div><b>${esc(l.label || 'קישור צפייה')}</b><div class="small mut">בתוקף עד ${fmtDT(l.expires_at)} · ${l.open_count ? `נפתח ${l.open_count} פעמים, לאחרונה ${fmtDT(l.opened_at)}` : 'עוד לא נפתח'} · עודכן ${fmtDT(l.payload_at)}</div></div>
+      ${mineOrWorkers(l) ? `<div class="actions"><button class="btn small ghost" data-refresh="${l.id}">עדכון עכשיו</button><button class="btn small ghost danger" data-revoke="${l.id}">ביטול</button></div>` : ''}</div>`).join('') || '<div class="empty small">אין קישורים פעילים</div>'}</div>`;
+}
+
 export function tabInspect(s) {
   const can = canInspect(s.id);
   const cur = inspectionsOf(s.id).find(x => israelDay(new Date(x.started_at)) === today());
@@ -91,10 +166,12 @@ export function tabInspect(s) {
         <div class="small">${(cur.notified || []).length ? 'נשלחה הודעה אל: ' + esc([...new Set(cur.notified.map(n => n.name))].join(', ')) : 'עוד לא נשלחה הודעה לבעלי התפקידים'}</div></div>` : ''}
       <div class="actions">${can ? (cur ? '<button class="btn" data-notify>הודעה לבעלי התפקידים</button>' : '<button class="btn big" data-open>פתיחת ביקורת והודעה לבעלי התפקידים</button>') : ''}
         <button class="btn ghost" data-pdf>ייצוא PDF</button></div></div>
-    ${secs.map((x, i) => `<div class="card"><h3>${esc(x.title)}</h3>${x.type === 'kv' ? `<div class="kv">${x.rows.map(([k, v]) => `<span>${esc(k)}</span><b>${esc(v)}</b>`).join('')}</div>`
-      : x.rows.length ? `<div class="tbl-wrap"><table class="tbl itbl"><thead><tr>${x.cols.map(([c]) => `<th>${esc(c)}</th>`).join('')}${x.files ? '<th></th>' : ''}</tr></thead><tbody>${x.rows.map((r, j) => `<tr>${r.map((v, k) => `<td data-l="${esc(x.cols[k][0])}">${esc(v)}</td>`).join('')}${x.files ? `<td>${x.files[j] ? `<button type="button" class="btn link" data-f="${i}:${j}">קובץ</button>` : ''}</td>` : ''}</tr>`).join('')}</tbody></table></div>`
-      : `<div class="empty small">${esc(x.empty || 'אין')}</div>`}</div>`).join('')}
+    ${linksCard(s)}
+    ${sectionsHtml(secs, (f, i, j) => f ? `<button type="button" class="btn link" data-f="${i}:${j}">קובץ</button>` : '')}
   </div>`);
+  $('[data-newlink]', el)?.addEventListener('click', () => newInspectorLink(s));
+  $$('[data-refresh]', el).forEach(b => b.onclick = async () => { b.disabled = true; try { await refreshInspectorLinks(s.id, true); toast('הקישור עודכן'); render(); } catch (e) { b.disabled = false; toast(e.message, 'bad'); } });
+  $$('[data-revoke]', el).forEach(b => b.onclick = async () => { if (!(await confirmBox('ביטול הקישור', 'מי שקיבל את הקישור לא יוכל לפתוח אותו יותר.', 'ביטול הקישור', true))) return; try { await db.rpc('share_link_revoke', { p_id: b.dataset.revoke }); await reloadLinks(); toast('הקישור בוטל'); render(); } catch (e) { toast(e.message, 'bad'); } });
   $$('[data-f]', el).forEach(b => b.onclick = () => { const [i, j] = b.dataset.f.split(':').map(Number); openFile(secs[i].files[j]); });
   $('[data-open]', el)?.addEventListener('click', () => openInspection(s));
   $('[data-notify]', el)?.addEventListener('click', () => notifyPeople(s, cur));
