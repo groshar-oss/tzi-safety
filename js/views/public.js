@@ -12,7 +12,7 @@ import { joinPage } from './invite.js';
 
 export const publicRoute = () => { const m = (location.hash || '').match(/^#\/(i|t|j)\/([0-9a-f]{32,128})\/?$/i); return m ? { kind: m[1], token: m[2] } : null; };
 const fmtDT = t => t ? new Date(t).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-const LOGO = '<div class="pub-brand"><img src="icons/tzi-logo-color.svg" alt="צי הנדסה – ניהול וביצוע"><span>ניהול בטיחות באתר</span></div>';
+const LOGO = '<div class="pub-brand"><img class="lg-lt" src="icons/tzi-logo-color.svg" alt="צי הנדסה – ניהול וביצוע"><img class="lg-dk" src="icons/tzi-logo-on-dark.svg" alt="צי הנדסה – ניהול וביצוע"><span>ניהול בטיחות באתר</span></div>';
 
 function page(inner) { const el = h(`<div class="pub">${LOGO}${inner}</div>`); $('#root').replaceChildren(el); return el; }
 const fail = m => page(`<div class="card pub-msg"><h2>הקישור לא נפתח</h2><p>${esc(m || 'הקישור לא בתוקף')}</p></div>`);

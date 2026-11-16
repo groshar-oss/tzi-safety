@@ -1,7 +1,7 @@
 // מסך אתר: סקירה, חובות, אירועים, בעלי תפקידים, יומן ביקורת
 import { db } from '../db.js';
 import { S, siteById, myRoles, hasRole, canEditSite, siteOrgs, render, sideOf, conNames } from '../app.js';
-import { derive, profileNotes, gateStatus, ROLES, ASSIGNABLE, EVENTS, CAT, LEVELS, level, WORK_TYPES } from '../duties.js';
+import { derive, profileNotes, gateStatus, ROLES, ASSIGNABLE, EVENTS, CAT, LEVELS, level, WORK_TYPES, clientSummary } from '../duties.js';
 import { exceptions, waLink, appUrl } from '../alerts.js';
 import { esc, h, $, $$, toast, modal, field, select, area, fmtDate } from '../util.js';
 import { dutyCard, compliance, gauge, openDuty, reportEvent, canReport, fmtDT, sideName } from './common.js';
@@ -56,6 +56,7 @@ function tabOverview(s) {
   const cons = conNames(s.id).map(esc).join(', ');
   const el = h(`<div>
     ${dv.clientDuties && !people.some(p => p.role === 'bakar') ? `<div class="banner crit">⛔ אין בקר בטיחות ממונה. כל עוד לא מונה, חובות הבקר חלות על היזם (תקנה 1א(ב)).<div class="actions"><a class="btn small" href="#/site/${s.id}/people">רישום בקר בטיחות</a></div></div>` : ''}
+    ${(cs => `<div class="clientline ${cs.need ? 'need' : 'free'}"><b>מזמין ובקר בטיחות:</b> ${esc(cs.text)}${cs.tenant ? `<div class="small">${esc(cs.tenant)}</div>` : ''}</div>`)(clientSummary(s.profile || {}))}
     ${wmBanner(s)}
     ${hcBanner(s)}
     ${checkinCard(s)}
@@ -198,7 +199,7 @@ function tabPeople(s) {
     <div class="card"><div class="dh"><h2>בעלי תפקידים באתר</h2><div class="actions">${ASSIGNABLE.some(r => canInvite(s, r)) ? '<button class="btn small ghost" data-inv>הזמנה בקישור</button>' : ''}${canEditSite(s.id) ? '<button class="btn small" data-add>הוספה</button>' : ''}</div></div>
     <p class="small mut">ההתראות נשלחות לפי התפקיד. טלפון משמש ל-WhatsApp ואימייל למיילים. מחליף מקבל התראה כשהאחראי לא טיפל תוך 24 שעות.</p>
     <div class="plist">${all.map(p => `<div class="prow ${p.active === false ? 'off' : ''}">
-      <div><b>${esc(p.name)}</b> ${p.backup ? '<span class="chip">מחליף</span>' : ''}${p.active === false ? '<span class="chip">לא פעיל</span>' : ''}<div class="small mut">${ROLES[p.role] || p.role}${p.license ? ' · ' + esc(p.license) : ''}</div></div>
+      <div><b>${esc(p.name)}</b> ${p.backup ? '<span class="chip">מחליף</span>' : ''}${p.active === false ? '<span class="chip">לא פעיל</span>' : ''}${['dev', 'bakar'].includes(p.role) && !dv.clientDuties ? '<span class="chip" title="באתר הזה חובות המזמין לא חלות (תקנה 1א(ד))">מרצון · לא חובה</span>' : ''}<div class="small mut">${ROLES[p.role] || p.role}${p.license ? ' · ' + esc(p.license) : ''}</div></div>
       <div class="small" dir="ltr">${esc(p.phone || '')}<br>${esc(p.email || '')}</div>
       <div class="actions">${p.role === 'rep' && p.active !== false ? `<button class="btn small ${authStatus(p) === 'signed' ? 'ghost' : ''}" data-auth="${p.id}">כתב הסמכה${authStatus(p) === 'signed' ? ' ✓ נחתם' : authStatus(p) === 'partial' ? ' · חסרה חתימה' : ' · לחתימה'}</button>` : ''}${canManage(s, p.role) && p.phone && p.email && p.active !== false && ASSIGNABLE.includes(p.role) ? `<a class="btn small ghost wa" data-login="${p.id}" target="_blank" rel="noopener" href="${esc(loginWa(s, p))}" title="שליחת הוראות כניסה למערכת ב-WhatsApp">פרטי כניסה</a>` : ''}${personDoc(p) && canManage(s, p.role) ? `<button class="btn small ghost" data-pdoc="${p.id}">תעודה</button>` : ''}${canManage(s, p.role) ? `<button class="btn small ghost" data-edit="${p.id}">עריכה</button>` : ''}</div></div>`).join('')}
     ${missing.map(([r]) => `<div class="prow need"><div><b>${ROLES[r]}</b> <span class="chip red">חסר</span><div class="small mut">${esc(WHY[r] || '')}</div></div><div></div>
@@ -233,6 +234,7 @@ async function personForm(s, p = null, preset = null) {
       <div class="grid g2">${field('מתאריך', 'from_date', p?.from_date || new Date().toISOString().slice(0, 10), { type: 'date' })}${field('עד תאריך', 'to_date', p?.to_date || '', { type: 'date' })}</div>
       <label class="chk"><input type="checkbox" name="backup" ${p?.backup ? 'checked' : ''}> מחליף (מקבל התראה כשהאחראי לא טיפל)</label>
       <label class="chk"><input type="checkbox" name="active" ${p?.active === false ? '' : 'checked'}> פעיל באתר</label>
+      ${!derive(s.profile || {}).clientDuties ? '<p class="small mut">באתר הזה חובות המזמין לא חלות, ולכן נציג מזמין ובקר בטיחות הם מרצון: הם מקבלים דוחות, אבל לא נפתחות להם חובות והתראות לפי תקנה 1א.</p>' : ''}
       ${p && p.active !== false ? '<p class="small mut">סיום כהונה של בקר, מנהל עבודה או מנהל אתר: מבטלים את "פעיל" ומדווחים אירוע, כדי שייפתחו חובות ההודעה והמינוי מחדש.</p>' : ''}`,
     validate: (d, form) => {
       if (!d.name?.trim()) return 'צריך שם';

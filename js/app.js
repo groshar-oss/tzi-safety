@@ -196,22 +196,39 @@ export async function render() {
   if (!document.querySelector('.ov')) repSignPrompt().catch(e => console.warn('rep sign', e));
 }
 
-function renderLogin() {
+// מסך כניסה. "הרשמה" עובר למצב נפרד עם סיסמה חדשה ואימות, כדי שהאייפון יציע ויישמור את הסיסמה הנכונה
+function renderLogin(mode = 'in', keep = {}) {
+  const reg = mode === 'up';
   const el = h(`<div class="login"><div class="box">
-    <div class="logo"><img src="icons/tzi-logo-color.svg" alt="צי הנדסה – ניהול וביצוע"></div><div class="mut small" style="text-align:center;margin:-8px 0 16px">ניהול בטיחות באתר בנייה</div>
-    <form id="lf">${field('אימייל', 'email', '', { type: 'email', req: true, attrs: 'autocomplete="username" dir="ltr"' })}
-    ${field('סיסמה', 'password', '', { type: 'password', req: true, attrs: 'autocomplete="current-password" dir="ltr"' })}
+    <div class="logo"><img class="lg-lt" src="icons/tzi-logo-color.svg" alt="צי הנדסה – ניהול וביצוע"><img class="lg-dk" src="icons/tzi-logo-on-dark.svg" alt="צי הנדסה – ניהול וביצוע"></div><div class="mut small" style="text-align:center;margin:-8px 0 16px">ניהול בטיחות באתר בנייה</div>
+    ${reg ? '<h3 style="margin:0 0 10px">הרשמה למערכת</h3>' : ''}
+    <form id="lf">${field('אימייל', 'email', keep.email || '', { type: 'email', req: true, attrs: 'autocomplete="username" dir="ltr"' })}
+    ${field(reg ? 'סיסמה חדשה (8 תווים לפחות)' : 'סיסמה', 'password', '', { type: 'password', req: true, attrs: `autocomplete="${reg ? 'new-password' : 'current-password'}" dir="ltr"` })}
+    ${reg ? field('הסיסמה שוב', 'password2', '', { type: 'password', req: true, attrs: 'autocomplete="new-password" dir="ltr"' }) : ''}
     <div class="err" id="lerr" hidden></div>
-    <div class="actions"><button class="btn" type="submit">כניסה</button><button class="btn ghost" type="button" id="signup">הרשמה</button><button class="btn link" type="button" id="forgot">שכחתי סיסמה</button></div></form></div></div>`);
+    <div class="actions">${reg
+      ? '<button class="btn" type="submit">יצירת משתמש</button><button class="btn link" type="button" id="tologin">כבר יש לי משתמש</button>'
+      : '<button class="btn" type="submit">כניסה</button><button class="btn ghost" type="button" id="signup">הרשמה</button><button class="btn link" type="button" id="forgot">שכחתי סיסמה</button>'}</div></form></div></div>`);
   $('#root').replaceChildren(el);
   const err = m => { const e = $('#lerr'); e.textContent = m; e.hidden = !m; };
   const vals = () => ({ email: $('[name=email]').value.trim(), password: $('[name=password]').value });
-  $('#lf').onsubmit = async e => { e.preventDefault(); err(''); try { await db.signIn(vals().email, vals().password); await boot(); } catch (x) { err(x.message); } };
-  $('#signup').onclick = async () => {
-    err(''); const v = vals(); if (!v.email || v.password.length < 8) return err('אימייל וסיסמה של 8 תווים לפחות');
-    try { const r = await db.signUp(v.email, v.password); if (r === 'signed_in') await boot(); else err(r === 'exists' ? 'האימייל כבר רשום. אפשר להתחבר, או ללחוץ "שכחתי סיסמה".' : 'נשלח אימייל לאישור. אחרי האישור אפשר להיכנס.'); } catch (x) { err(x.message); }
+  if (reg) {
+    $('#tologin').onclick = () => renderLogin('in', { email: vals().email });
+    $('#lf').onsubmit = async e => {
+      e.preventDefault(); err(''); const v = vals();
+      if (!v.email || v.password.length < 8) return err('אימייל וסיסמה של 8 תווים לפחות');
+      if (v.password !== $('[name=password2]').value) return err('שתי הסיסמאות לא זהות');
+      try { const r = await db.signUp(v.email, v.password); if (r === 'signed_in') await boot(); else err(r === 'exists' ? 'האימייל כבר רשום. אפשר להתחבר, או ללחוץ "שכחתי סיסמה".' : 'נשלח אליך מייל לאישור (כדאי לבדוק גם בספאם). אחרי האישור נכנסים עם האימייל והסיסמה.'); } catch (x) { err(x.message); }
+    };
+    return;
+  }
+  $('#lf').onsubmit = async e => {
+    e.preventDefault(); err('');
+    try { await db.signIn(vals().email, vals().password); await boot(); }
+    catch (x) { err(/שגויים/.test(x.message) ? x.message + '. אם האייפון מילא סיסמה אוטומטית, כדאי להקליד אותה ידנית. לא בטוחים? "שכחתי סיסמה" שולח קישור לבחירת סיסמה חדשה.' : x.message); }
   };
-  $('#forgot').onclick = async () => { err(''); const v = vals(); if (!v.email) return err('צריך לכתוב את האימייל ואז ללחוץ שוב'); try { await db.resetPassword(v.email); err('נשלח קישור לאיפוס סיסמה'); } catch (x) { err(x.message); } };
+  $('#signup').onclick = () => renderLogin('up', { email: vals().email });
+  $('#forgot').onclick = async () => { err(''); const v = vals(); if (!v.email) return err('צריך לכתוב את האימייל ואז ללחוץ שוב'); try { await db.resetPassword(v.email); err('נשלח קישור לבחירת סיסמה חדשה (כדאי לבדוק גם בספאם). הקישור גם מאשר את המייל.'); } catch (x) { err(x.message); } };
 }
 
 async function newPassword() {

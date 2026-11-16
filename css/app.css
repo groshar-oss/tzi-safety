@@ -136,6 +136,10 @@ td .crit{color:#fff;background:#8e1b1b;border-radius:4px;padding:0 5px;font-size
 .login .box{background:var(--card);border-radius:16px;padding:26px;width:min(400px,100%)}
 .login .logo{display:flex;gap:10px;align-items:center;margin-bottom:18px}
 .login .logo{justify-content:center}.login .logo img{height:64px}
+/* לוגו: גרסה בהירה במצב כהה */
+.lg-dk{display:none!important}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .lg-lt{display:none!important}:root:not([data-theme=light]) .lg-dk{display:inline-block!important}}
+:root[data-theme=dark] .lg-lt{display:none!important}:root[data-theme=dark] .lg-dk{display:inline-block!important}
 
 /* טלפון */
 
@@ -480,3 +484,8 @@ details summary{cursor:pointer;font-size:13px;font-weight:600;margin-top:8px}
 .join .fld{margin-bottom:10px}.join-steps{text-align:start;margin:10px 0;padding-inline-start:22px;line-height:1.6}
 .join-sign{margin:14px 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--card,#fff)}.join-sign h3{margin:0 0 4px}.join-sign details summary{cursor:pointer;padding:4px 0}.join-sign .actions{justify-content:flex-start}
 .login .box .actions{margin-top:12px}
+
+/* מזמין ובקר: שורת סיכום בעמוד האתר ובאשף */
+.clientline{border-radius:10px;padding:10px 12px;font-size:14px;margin-bottom:12px;border:1px solid var(--line);background:var(--card)}
+.clientline.need{border-inline-start:4px solid #c0392b}.clientline.free{border-inline-start:4px solid #2e8b57}
+.clientline .small{margin-top:6px;color:var(--mut)}

@@ -74,6 +74,24 @@ export function derive(p = {}) {
   };
 }
 
+// מזמין ובקר בטיחות: האם נדרשים ולמה (תקנות 1, 1א, 2(ז))
+export const CLIENT_KINDS = { '': 'בחירה…', owner: 'בעל הנכס (עבודה בלי היתר)', permit: 'בעל ההיתר', tenant: 'שוכר / דייר שהזמין את העבודה' };
+export function clientSummary(p = {}) {
+  const d = derive(p);
+  const why = d.clientDuties
+    ? (p.permit_required && !p.permit_exempt ? 'העבודה טעונה היתר בנייה'
+      : d.existing && p.engineer_needed ? 'נדרש אישור מהנדס רשוי (למשל שינוי בקונסטרוקציה)'
+      : ['fitout', 'renovation'].includes(p.work_type) && !p.completion_cert ? 'המבנה לא קיבל תעודת גמר'
+      : 'העבודה אינה מסוג 2(ז)')
+    : (d.selfBuild ? 'עבודת בנייה עצמית' : d.exemptWhy);
+  const text = d.clientDuties
+    ? `נדרשים. ${why}, ולכן חלות חובות המזמין: אישור בכתב להתחלת העבודה ומינוי בקר בטיחות (תקנה 1א).`
+    : `לא נדרשים לפי התקנות. ${why}, ולכן חובות המזמין, כולל מינוי בקר, לא חלות (תקנה 1א(ד)). אפשר לרשום אותם מרצון.`;
+  const tenant = p.client_kind === 'tenant'
+    ? 'המזמין שסומן הוא שוכר. לפי ההגדרה בתקנה 1, המזמין הוא בעל הנכס (בעבודה בלי היתר) או בעל ההיתר. התקנות לא מתייחסות לשוכר במפורש, ולכן כדאי לברר עם יועץ מי נושא בחובות המזמין.' : '';
+  return { need: d.clientDuties, why, text, tenant };
+}
+
 // הסבר מילולי לפרופיל (מה חל ולמה)
 export function profileNotes(p) {
   const d = derive(p), out = [];
@@ -90,6 +108,7 @@ export function profileNotes(p) {
   out.push(d.n192 ? ['ok', 'משך מעל 6 שבועות: חובת הודעה למפקח העבודה האזורי (ס\' 192 לפקודה, תקנה 6א).'] : ['na', 'משך צפוי פחות מ-6 שבועות: אין חובת הודעה לפי ס\' 192(ב). יש לאשר שההערכה סבירה.']);
   if (d.contractors > 1) out.push(d.devIsExecutor ? ['warn', 'יותר מקבלן ראשי אחד ואף אחד מהם לא קיבל אחריות כוללת בכתב: היזם הוא מבצע הבנייה ונושא בכל חובותיו (תקנה 6(ג)).'] : ['ok', 'אחד הקבלנים הראשיים קיבל בכתב אחריות כוללת של מבצע בנייה (תקנה 6(ד)).']);
   if (d.foreign) out.push(['ok', 'עובדים זרים: הדרכה נוספת של 8 שעות לפני תום חודש מהכניסה לישראל (תקנה 3א לתקנות ההדרכה).']);
+  const cs = clientSummary(p); if (cs.tenant) out.push(['warn', cs.tenant]);
   if (p.active_before) out.push(['warn', 'האתר היה פעיל לפני 16.10.2026: החובות החדשות חלות ממועד התחילה. חובות שטרם בוצעו מופיעות כפער.']);
   return out;
 }
