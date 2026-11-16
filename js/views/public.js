@@ -1,14 +1,16 @@
 // עמודים שנפתחים בלי שם משתמש וסיסמה, מקישור אישי:
 // #/i/<קוד> צפייה בלבד למפקח עבודה, מוגבלת בזמן
 // #/t/<קוד> עובד חותם בטלפון שלו על קבלת הדרכה
+// #/j/<קוד> הזמנה להצטרף למערכת: המוזמן נרשם, ומנהל המערכת מאשר
 import { db } from '../db.js';
 import { esc, h, $, toast } from '../util.js';
 import { LANGS, localStatement, langCode, OK_BTN, SIGN_HERE, READ_OK, SIGNED_OK } from '../langs.js';
 import { TRAINING_KINDS } from '../workers.js';
 import { pad } from './sign.js';
 import { sectionsHtml } from './inspect.js';
+import { joinPage } from './invite.js';
 
-export const publicRoute = () => { const m = (location.hash || '').match(/^#\/(i|t)\/([0-9a-f]{32,128})\/?$/i); return m ? { kind: m[1], token: m[2] } : null; };
+export const publicRoute = () => { const m = (location.hash || '').match(/^#\/(i|t|j)\/([0-9a-f]{32,128})\/?$/i); return m ? { kind: m[1], token: m[2] } : null; };
 const fmtDT = t => t ? new Date(t).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 const LOGO = '<div class="pub-brand"><img src="icons/tzi-logo-color.svg" alt="צי הנדסה – ניהול וביצוע"><span>ניהול בטיחות באתר</span></div>';
 
@@ -19,6 +21,7 @@ export async function renderPublic({ kind, token }) {
   page('<div class="card pub-msg"><p class="mut">טוען…</p></div>');
   try { await db.init(); } catch (e) { return fail('אין חיבור לאינטרנט. צריך לנסות שוב כשיש קליטה.'); }
   try {
+    if (kind === 'j') return joinPage(token, await db.rpc('invite_info', { p_token: token }), page);
     if (kind === 'i') return inspectorPage(await db.rpc('share_inspector', { p_token: token }));
     return trainingPage(token, await db.rpc('share_training', { p_token: token }));
   } catch (e) { return fail(e.offline ? 'אין חיבור לאינטרנט. צריך לנסות שוב כשיש קליטה.' : e.message); }

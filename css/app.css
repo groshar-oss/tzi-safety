@@ -473,3 +473,9 @@ details summary{cursor:pointer;font-size:13px;font-weight:600;margin-top:8px}
 .tbl.trend{min-width:560px}.tbl.trend th,.tbl.trend td{white-space:nowrap;text-align:center}
 .tbl.trend td:first-child,.tbl.trend th:first-child{position:sticky;right:0;background:var(--card);text-align:right;z-index:1}
 @media (max-width:700px){.mkpis{grid-template-columns:repeat(2,1fr)!important}.mkpis .kpi{padding:10px}}
+/* ===== חבילה 1.10: הזמנה בקישור ===== */
+.inv-doc{display:block;max-width:100%;max-height:60vh;margin:6px 0 10px;border:1px solid var(--line);border-radius:8px;object-fit:contain;background:#fff}
+.inv-banner .inv-line{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+.wrow.inv-p{border-inline-start:4px solid #e0a100}
+.join .fld{margin-bottom:10px}.join-steps{text-align:start;margin:10px 0;padding-inline-start:22px;line-height:1.6}
+.login .box .actions{margin-top:12px}

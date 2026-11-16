@@ -15,6 +15,7 @@ import { viewField, isFieldUser } from './views/field.js';
 import { syncExpiry } from './workers.js';
 import { viewOverview, showOverview } from './views/overview.js';
 import { publicRoute, renderPublic } from './views/public.js';
+import { myInviteStatus } from './views/invite.js';
 import { refreshInspectorLinks } from './views/inspect.js';
 
 export const S = { user: null, ctx: null, data: null };
@@ -73,7 +74,9 @@ export async function loadAll() {
   const [bakar_reports, accident_reports] = await Promise.all(['bakar_reports', 'accident_reports'].map(t => db.select(t, { order: 'created_at' }).catch(() => [])));
   // בדיקה יומית לציוד, תוכנית בטיחות וקישורים בלי כניסה (חבילה 1.8)
   const [equipment_checks, safety_plans, share_links] = await Promise.all(['equipment_checks', 'safety_plans', 'share_links'].map(t => db.select(t, { order: 'created_at' }).catch(() => [])));
-  S.data = { orgs, sites, site_orgs, site_people, duties, events, notifications, checkins, notices, signatures, workers, trainings, training_signatures, equipment, inspections, attendance, worker_exemptions, site_inspections, defects, bakar_reports, accident_reports, equipment_checks, safety_plans, share_links };
+  // הזמנות בקישור (חבילה 1.10)
+  const site_invites = await db.select('site_invites', { order: 'created_at' }).catch(() => []);
+  S.data = { orgs, sites, site_orgs, site_people, duties, events, notifications, checkins, notices, signatures, workers, trainings, training_signatures, equipment, inspections, attendance, worker_exemptions, site_inspections, defects, bakar_reports, accident_reports, equipment_checks, safety_plans, share_links, site_invites };
   // סנכרון החובות מול הפרופיל של כל אתר (חובה חוזרת שבוצעה פותחת את הבאה)
   for (const s of sites) await syncSite(s, false);
   if (isCloud()) { saveSnap(S.user?.email, S.ctx, S.data); net.offline = false; }
@@ -158,7 +161,14 @@ export async function render() {
   const root = $('#root');
   if (!S.user) return renderLogin();
   if (!isAdmin() && !visibleSites().length && isCloud()) {
-    root.replaceChildren(h(`<div class="login"><div class="box"><h2>עדיין אין לך גישה לאתר</h2><p class="mut">המשתמש ${esc(S.user.email)} רשום, אבל עוד לא שויך לארגון או לאתר. מנהל השירות או נציג הארגון צריכים להוסיף אותו.</p><button class="btn" id="lo">יציאה</button></div></div>`));
+    const inv = await myInviteStatus();
+    const pend = inv.filter(i => i.status === 'pending'), rej = inv.filter(i => i.status === 'rejected');
+    const msg = pend.length ? `<h2>ההרשמה ממתינה לאישור</h2><p>הבקשה שלך להצטרף ${pend.map(i => `לאתר ${esc(i.site)} בתפקיד ${esc(ROLES[i.role] || i.role)}`).join(', ')} ממתינה לאישור מנהל המערכת. כשתאושר יגיע אליך מייל, ואז נכנסים כרגיל.</p>`
+      : rej.length ? `<h2>הבקשה לא אושרה</h2><p>הבקשה להצטרף לאתר ${esc(rej[0].site)} לא אושרה.${rej[0].reject_reason ? ' ' + esc(rej[0].reject_reason) : ''}</p><p class="mut small">אפשר לפנות למי ששלח לך את הקישור.</p>`
+      : `<h2>עדיין אין לך גישה לאתר</h2><p class="mut">המשתמש ${esc(S.user.email)} רשום, אבל עוד לא שויך לארגון או לאתר. מנהל השירות או נציג הארגון צריכים להוסיף אותו.</p>`;
+    if (my !== seq) return;
+    root.replaceChildren(h(`<div class="login"><div class="box">${msg}<div class="actions"><button class="btn ghost" id="rl">בדיקה שוב</button><button class="btn" id="lo">יציאה</button></div></div></div>`));
+    $('#rl').onclick = () => location.reload();
     $('#lo').onclick = async () => { await db.signOut(); location.reload(); };
     return;
   }
@@ -198,7 +208,7 @@ function renderLogin() {
   $('#lf').onsubmit = async e => { e.preventDefault(); err(''); try { await db.signIn(vals().email, vals().password); await boot(); } catch (x) { err(x.message); } };
   $('#signup').onclick = async () => {
     err(''); const v = vals(); if (!v.email || v.password.length < 8) return err('אימייל וסיסמה של 8 תווים לפחות');
-    try { const r = await db.signUp(v.email, v.password); if (r === 'signed_in') await boot(); else err('נשלח אימייל לאישור. אחרי האישור אפשר להיכנס.'); } catch (x) { err(x.message); }
+    try { const r = await db.signUp(v.email, v.password); if (r === 'signed_in') await boot(); else err(r === 'exists' ? 'האימייל כבר רשום. אפשר להתחבר, או ללחוץ "שכחתי סיסמה".' : 'נשלח אימייל לאישור. אחרי האישור אפשר להיכנס.'); } catch (x) { err(x.message); }
   };
   $('#forgot').onclick = async () => { err(''); const v = vals(); if (!v.email) return err('צריך לכתוב את האימייל ואז ללחוץ שוב'); try { await db.resetPassword(v.email); err('נשלח קישור לאיפוס סיסמה'); } catch (x) { err(x.message); } };
 }
@@ -213,6 +223,7 @@ async function newPassword() {
 export async function boot() {
   // קישור בלי כניסה: מפקח עבודה או עובד שחותם על הדרכה
   const pub = publicRoute();
+  wasPublic = !!pub;
   if (pub) return renderPublic(pub);
   try {
     S.user = await db.init();
@@ -285,7 +296,9 @@ setInterval(() => { if (net.pending || net.offline) syncNow(); }, 45e3);
 
 export { level };
 const theme = store('safety-theme'); if (theme) document.documentElement.dataset.theme = theme;
-window.addEventListener('hashchange', () => { if (publicRoute()) boot(); else render(); });
+// יציאה מעמוד בלי כניסה חזרה למערכת: טוענים מחדש, כי הנתונים אולי השתנו בינתיים
+let wasPublic = false;
+window.addEventListener('hashchange', () => { if (publicRoute() || wasPublic) boot(); else render(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 // רענון כל 5 דקות כדי שהשעונים וההתראות יתעדכנו גם כשהמסך פתוח
 setInterval(() => { if (S.user && !document.querySelector('.ov')) render(); }, 5 * 60e3);

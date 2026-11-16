@@ -17,6 +17,7 @@ import { tabDefects, defectSummary, defectsOf, SEV } from './defects.js';
 import { accidentForm, accidentOf, canAccident } from './reports.js';
 import { tabPlan } from './plan.js';
 import { monthlyReport, canMonthly } from './monthly.js';
+import { invitesCard, wireInvites, newInvite, personDoc, canInvite } from './invite.js';
 import { TRAINING_KINDS, sigsOfTraining, equipmentOf, headcount, renderPdfPages, pagesToPdf } from '../workers.js';
 
 const TABS = [['overview', 'סקירה'], ['recurring', 'משימות חוזרות'], ['workers', 'עובדים והדרכות'], ['equipment', 'ציוד ותסקירים'], ['defects', 'ליקויים'], ['plan', 'תוכנית בטיחות'], ['duties', 'חובות'], ['events', 'אירועים'], ['people', 'בעלי תפקידים'], ['log', 'פנקס כללי'], ['audit', 'יומן ביקורת']];
@@ -194,15 +195,18 @@ function tabPeople(s) {
   const missing = need.filter(([r, req]) => req && !all.some(p => p.role === r && p.active !== false));
   const el = h(`<div>
     ${missing.length ? `<div class="banner">חסרים בעלי תפקידים שהתקנות מחייבות: ${missing.map(([r]) => ROLES[r]).join(', ')}</div>` : ''}
-    <div class="card"><div class="dh"><h2>בעלי תפקידים באתר</h2>${canEditSite(s.id) ? '<button class="btn small" data-add>הוספה</button>' : ''}</div>
+    <div class="card"><div class="dh"><h2>בעלי תפקידים באתר</h2><div class="actions">${ASSIGNABLE.some(r => canInvite(s, r)) ? '<button class="btn small ghost" data-inv>הזמנה בקישור</button>' : ''}${canEditSite(s.id) ? '<button class="btn small" data-add>הוספה</button>' : ''}</div></div>
     <p class="small mut">ההתראות נשלחות לפי התפקיד. טלפון משמש ל-WhatsApp ואימייל למיילים. מחליף מקבל התראה כשהאחראי לא טיפל תוך 24 שעות.</p>
     <div class="plist">${all.map(p => `<div class="prow ${p.active === false ? 'off' : ''}">
       <div><b>${esc(p.name)}</b> ${p.backup ? '<span class="chip">מחליף</span>' : ''}${p.active === false ? '<span class="chip">לא פעיל</span>' : ''}<div class="small mut">${ROLES[p.role] || p.role}${p.license ? ' · ' + esc(p.license) : ''}</div></div>
       <div class="small" dir="ltr">${esc(p.phone || '')}<br>${esc(p.email || '')}</div>
-      <div class="actions">${p.role === 'rep' && p.active !== false ? `<button class="btn small ${authStatus(p) === 'signed' ? 'ghost' : ''}" data-auth="${p.id}">כתב הסמכה${authStatus(p) === 'signed' ? ' ✓ נחתם' : authStatus(p) === 'partial' ? ' · חסרה חתימה' : ' · לחתימה'}</button>` : ''}${canManage(s, p.role) ? `<button class="btn small ghost" data-edit="${p.id}">עריכה</button>` : ''}</div></div>`).join('')}
+      <div class="actions">${p.role === 'rep' && p.active !== false ? `<button class="btn small ${authStatus(p) === 'signed' ? 'ghost' : ''}" data-auth="${p.id}">כתב הסמכה${authStatus(p) === 'signed' ? ' ✓ נחתם' : authStatus(p) === 'partial' ? ' · חסרה חתימה' : ' · לחתימה'}</button>` : ''}${personDoc(p) && canManage(s, p.role) ? `<button class="btn small ghost" data-pdoc="${p.id}">תעודה</button>` : ''}${canManage(s, p.role) ? `<button class="btn small ghost" data-edit="${p.id}">עריכה</button>` : ''}</div></div>`).join('')}
     ${missing.map(([r]) => `<div class="prow need"><div><b>${ROLES[r]}</b> <span class="chip red">חסר</span><div class="small mut">${esc(WHY[r] || '')}</div></div><div></div>
-      <div class="actions">${canManage(s, r) ? `<button class="btn small" data-fill="${r}">השלמה</button>` : `<span class="small mut">ממנה ${SIDE_OF_ROLE[r] === 'dev' ? 'היזם' : 'הקבלן הראשי'}</span>`}</div></div>`).join('')}
-    ${!all.length && !missing.length ? '<div class="empty">עוד לא הוגדרו בעלי תפקידים</div>' : ''}</div></div></div>`);
+      <div class="actions">${canManage(s, r) ? `${canInvite(s, r) ? `<button class="btn small ghost" data-invr="${r}">הזמנה בקישור</button>` : ''}<button class="btn small" data-fill="${r}">השלמה</button>` : `<span class="small mut">ממנה ${SIDE_OF_ROLE[r] === 'dev' ? 'היזם' : 'הקבלן הראשי'}</span>`}</div></div>`).join('')}
+    ${!all.length && !missing.length ? '<div class="empty">עוד לא הוגדרו בעלי תפקידים</div>' : ''}</div></div>${invitesCard(s)}</div>`);
+  wireInvites(s, el);
+  $('[data-inv]', el)?.addEventListener('click', () => newInvite(s));
+  $$('[data-invr]', el).forEach(b => b.onclick = () => newInvite(s, b.dataset.invr));
   $$('[data-fill]', el).forEach(b => b.onclick = () => personForm(s, null, b.dataset.fill));
   $('[data-add]', el)?.addEventListener('click', () => personForm(s));
   $$('[data-edit]', el).forEach(b => b.onclick = () => personForm(s, all.find(p => p.id === b.dataset.edit)));

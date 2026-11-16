@@ -35,7 +35,7 @@ async function load() {
 // ===== גיבוי חודשי: כל הטבלאות לקובץ JSON דחוס בתיקייה פרטית (backups) שרק מנהל השירות רואה =====
 const TABLES = ['profiles', 'orgs', 'memberships', 'sites', 'site_orgs', 'site_people', 'duties', 'events', 'notifications', 'files', 'audit_log', 'checkins', 'notices', 'signatures', 'workers',
   'trainings', 'training_signatures', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'mail_log',
-  'equipment_checks', 'safety_plans', 'share_links'];
+  'equipment_checks', 'safety_plans', 'share_links', 'site_invites'];
 async function backup(day: string) {
   const dump = { made_at: new Date().toISOString(), tables: {} };
   for (const t of TABLES) dump.tables[t] = await all(t).catch(e => ({ error: String(e.message || e) }));
@@ -46,6 +46,36 @@ async function backup(day: string) {
   if (!r.ok) throw new Error('backup upload: ' + r.status + ' ' + await r.text());
   const rows = Object.values(dump.tables).reduce((n: number, x) => n + (Array.isArray(x) ? x.length : 0), 0);
   return { path, bytes: body.length, rows };
+}
+
+// ===== הזמנה בקישור (חבילה 1.10): בקשה ממתינה למנהלי המערכת, ואישור או דחייה למוזמן =====
+const APP = 'https://safety.tzi-eng.co.il/';
+const ROLE_HE = { dev: 'נציג היזם', bakar: 'בקר בטיחות', con: 'מבצע הבנייה (קבלן ראשי)', so: 'ממונה על הבטיחות', sm: 'מנהל האתר', wm: 'מנהל עבודה', rep: 'נציג מבצע הבנייה באתר', fa: 'אחראי עזרה ראשונה' };
+const escH = (x: string) => String(x ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const wrap = (rows: string[], btn?: [string, string]) => `<div dir="rtl" style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#1d2733">${rows.map(r => `<p style="margin:0 0 10px">${r}</p>`).join('')}${btn ? `<p><a href="${btn[1]}" style="display:inline-block;background:#1d3b5c;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">${btn[0]}</a></p>` : ''}<p style="color:#888;font-size:12px">צי הנדסה · ניהול בטיחות באתר</p></div>`;
+async function inviteMails(admins: string[]) {
+  const since = new Date(Date.now() - 7 * 864e5).toISOString();
+  const inv = await all('site_invites', `&status=in.(pending,approved,rejected)&submitted_at=gte.${since}`, 'id,site_id,role,status,name,phone,email,license,has_doc,submitted_at,decided_at,reject_reason').catch(() => []);
+  if (!inv.length) return [];
+  const sites = await all('sites', '', 'id,name');
+  const site = (id: string) => sites.find(x => x.id === id)?.name || '';
+  const out = [];
+  for (const i of inv) {
+    const role = ROLE_HE[i.role] || i.role, sn = site(i.site_id);
+    if (i.status === 'pending' && admins.length) {
+      const rows = [`<b>${escH(i.name)}</b> נרשם/ה דרך קישור הזמנה ומחכה לאישור שלך.`, `אתר: ${escH(sn)}<br>תפקיד: ${escH(role)}<br>טלפון: <span dir="ltr">${escH(i.phone)}</span><br>אימייל: <span dir="ltr">${escH(i.email)}</span>${i.license ? `<br>רישיון / הכשרה: ${escH(i.license)}` : ''}<br>${i.has_doc ? 'צורפה תעודה (רואים אותה במסך האישור).' : 'לא צורפה תעודה.'}`];
+      out.push({ key: `invite:${i.id}:pending:${i.submitted_at}`, kind: 'invite_pending', site_id: i.site_id, to: admins, subject: `בקשת הצטרפות ממתינה לאישור: ${i.name} · ${role} · ${sn}`,
+        text: `${i.name} נרשם/ה דרך קישור הזמנה ומחכה לאישור. אתר: ${sn}. תפקיד: ${role}. טלפון: ${i.phone}. אימייל: ${i.email}. לאישור: ${APP}#/site/${i.site_id}/people`,
+        html: wrap(rows, ['בדיקה ואישור', `${APP}#/site/${i.site_id}/people`]) });
+    }
+    if (i.status === 'approved' && i.email) out.push({ key: `invite:${i.id}:approved`, kind: 'invite_approved', site_id: i.site_id, to: [i.email], subject: `אושרת במערכת הבטיחות · ${sn}`,
+      text: `שלום ${i.name}, הבקשה שלך להצטרף לאתר ${sn} בתפקיד ${role} אושרה. נכנסים עם האימייל והסיסמה שבחרת: ${APP}`,
+      html: wrap([`שלום ${escH(i.name)},`, `הבקשה שלך להצטרף לאתר <b>${escH(sn)}</b> בתפקיד ${escH(role)} אושרה.`, 'נכנסים עם האימייל והסיסמה שבחרת בהרשמה. מומלץ להוסיף את האפליקציה למסך הבית בטלפון.'], ['כניסה למערכת', APP]) });
+    if (i.status === 'rejected' && i.email) out.push({ key: `invite:${i.id}:rejected`, kind: 'invite_rejected', site_id: i.site_id, to: [i.email], subject: `הבקשה להצטרף לאתר ${sn} לא אושרה`,
+      text: `שלום ${i.name}, הבקשה שלך להצטרף לאתר ${sn} בתפקיד ${role} לא אושרה.${i.reject_reason ? ' ' + i.reject_reason : ''} אפשר לפנות למי ששלח לך את הקישור.`,
+      html: wrap([`שלום ${escH(i.name)},`, `הבקשה שלך להצטרף לאתר <b>${escH(sn)}</b> בתפקיד ${escH(role)} לא אושרה.`, ...(i.reject_reason ? [escH(i.reject_reason)] : []), 'אפשר לפנות למי ששלח לך את הקישור.']) });
+  }
+  return out;
 }
 
 async function send(m) {
@@ -90,9 +120,9 @@ Deno.serve(async req => {
       }
     }
     const data = await load();
-    const mails = plan(data, now, opts).filter(m => m.to?.length);
     // מנהלי המערכת (צי הנדסה) מקבלים עותק נסתר של כל מייל
     const admins = (await rest('profiles?select=email&is_service_admin=eq.true')).map(x => String(x.email || '').toLowerCase()).filter(Boolean);
+    const mails = [...plan(data, now, opts), ...await inviteMails(admins)].filter(m => m.to?.length);
     for (const m of mails) m.bcc = admins.filter(e => !m.to.includes(e) && !(m.cc || []).includes(e));
     if (!mails.length) return new Response(JSON.stringify({ planned: 0, sent: 0, dry: !!opts.dry, backup: bk }));
     // מה כבר נשלח (מפתח לכל מייל: התראה פעם אחת לחובה, סיכום פעם ביום לאדם, דוח פעם בשבוע)

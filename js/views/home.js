@@ -5,6 +5,7 @@ import { derive, gateStatus, ROLES } from '../duties.js';
 import { esc, h } from '../util.js';
 import { dutyCard, compliance, gauge, chip } from './common.js';
 import { checkinCard } from './checkin.js';
+import { pendingBanner, wirePending } from './invite.js';
 
 const STATUS = { planning: 'לפני התחלה', approved: 'אושר להתחלה', active: 'פעיל', stopped: 'מושבת', closed_order: 'סגור בצו', done: 'הסתיים' };
 export const statusName = s => STATUS[s] || s || '';
@@ -38,6 +39,7 @@ export function viewHome() {
   const el = h(`<div>
     <div class="top"><div><h1>מה דורש טיפול</h1><div class="sub">${sites.length} אתרים · ${ex.length} התראות פתוחות</div></div>
       <div class="actions"><a class="btn ghost" href="#/alerts">כל ההתראות</a>${isAdmin() || sites.some(s => myRoles(s.id).includes('dev')) ? '<a class="btn" href="#/new-site">אתר חדש</a>' : ''}</div></div>
+    ${pendingBanner()}
     ${devSide && actingBakar.length ? `<div class="banner crit">⛔ ${actingBakar.map(s => esc(s.name)).join(', ')}: אין בקר בטיחות ממונה. כל עוד לא מונה, חובות הבקר חלות על היזם (תקנה 1א(ב)).</div>` : ''}
     ${sites.filter(s => myRoles(s.id).some(r => ['wm', 'rep', 'admin', 'con'].includes(r))).map(checkinCard).join('')}
     ${sites.filter(s => derive(s.profile).exempt27 && sideOf(s.id) !== 'dev' && !S.data.site_people.some(p => p.site_id === s.id && ['wm', 'rep'].includes(p.role) && p.active !== false)).map(s => `<div class="banner crit">⛔ ${esc(s.name)}: חובות מנהל העבודה חלות על מבצע הבנייה (תקנה 2(ז)), ואין באתר מי שמבצע אותן. <a href="#/site/${s.id}/people">רישום נציג</a></div>`).join('')}
@@ -57,5 +59,6 @@ export function viewHome() {
         <div class="card small mut">התפקיד שלך: ${[...new Set(sites.flatMap(s => myRoles(s.id)))].map(r => r === 'admin' ? 'מנהל שירות' : ROLES[r]).join(', ') || '—'}</div></div>
     </div></div>`);
   void chip;
+  wirePending(el);
   return el;
 }
