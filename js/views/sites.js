@@ -1,7 +1,7 @@
 // רשימת אתרים ואשף התחולה (אתר חדש / עריכת פרופיל משפטי)
 import { db } from '../db.js';
 import { S, visibleSites, isAdmin, myRoles, siteById, syncSite, render, hasRole } from '../app.js';
-import { WORK_TYPES, STAGES, ACTIVITIES, profileNotes, derive, sync, CAT } from '../duties.js';
+import { WORK_TYPES, STAGES, ACTIVITIES, profileNotes, derive, sync, CAT, clientSummary, CLIENT_KINDS } from '../duties.js';
 import { esc, h, $, $$, toast, field, select, modal } from '../util.js';
 import { siteCard } from './home.js';
 
@@ -38,12 +38,14 @@ export function viewNewSite(siteId) {
           ${select('סוג העבודה', 'work_type', WORK_TYPES, p.work_type)}
           ${yn('העבודה טעונה היתר בנייה', 'permit_required', p.permit_required, 'אם כן, המזמין הוא בעל ההיתר. אם לא, בעל הנכס.')}
           <div class="grid g2">${field('מספר היתר', 'permit_no', p.permit_no || '')}${field('בעל ההיתר / בעל הנכס', 'owner', p.owner || '')}</div>
+          ${select('מי המזמין (מי שהתקשר עם הקבלן)', 'client_kind', CLIENT_KINDS, p.client_kind || '')}
           <div id="existingQ">
             ${yn('המבנה קיבל תעודת גמר (עבודה במבנה קיים)', 'completion_cert', p.completion_cert)}
             ${yn('נדרש אישור מהנדס רשוי לפי סעיף 12 לחוק המהנדסים והאדריכלים', 'engineer_needed', p.engineer_needed, 'למשל שינוי בקונסטרוקציה. אם לא נדרש, זו עבודה מסוג 2(ז)(1).')}
           </div>
           ${yn('העבודה פטורה מהיתר בנייה', 'permit_exempt', p.permit_exempt)}
           ${yn('עבודת בנייה עצמית', 'self_build', p.self_build, 'בית צמוד קרקע שאינו בנייה רוויה, או שיפוץ למגורים ביוזמת יחיד שלא במסגרת עסק. מומלץ לאשר מול יועץ.')}
+          <div id="client2"></div>
         </div>
         <div class="card"><h2>3. היקף</h2>
           <div class="grid g3">${field('שטח לפי ההיתר (מ"ר)', 'area', p.area || '', { type: 'number' })}${field('מספר עובדים מרבי בו-זמנית (כולל קבלני משנה)', 'workers_max', p.workers_max || '', { type: 'number' })}${field('משך צפוי (שבועות)', 'duration_weeks', p.duration_weeks || '', { type: 'number' })}</div>
@@ -60,7 +62,7 @@ export function viewNewSite(siteId) {
         <div class="card"><h2>5. שלבי בנייה (לתזמון ביקורי הבקר)</h2><p class="small mut">תאריך התחלה לכל שלב שמבוצע באתר. השאירו ריק אם השלב לא מבוצע.</p>
           <div class="grid g4">${Object.entries(STAGES).map(([k, v]) => field(v, 'st_' + k, p.stages?.[k] || '', { type: 'date' })).join('')}</div></div>
       </div>
-      <div><div class="card sticky"><h2>מה חל על האתר</h2><div id="notes"></div><div id="diff"></div>
+      <div><div class="card sticky"><h2>מה חל על האתר</h2><div id="client"></div><div id="notes"></div><div id="diff"></div>
         <div class="err" id="werr" hidden></div>
         <div class="actions"><button class="btn" type="submit">${site ? 'שמירת הפרופיל' : 'יצירת האתר'}</button><a class="btn ghost" href="${site ? '#/site/' + site.id : '#/sites'}">ביטול</a></div>
         <p class="small mut">הקביעה מבוססת על התשובות. במקרה ספק, יש לאשר מול יועץ בטיחות או עו"ד.</p></div></div>
@@ -70,7 +72,7 @@ export function viewNewSite(siteId) {
     const f = form.elements, v = n => f[n]?.value, c = n => !!f[n]?.checked;
     return {
       name: v('name').trim(), address: v('address').trim(), dev_org: v('dev_org'), cons: cons.filter(o => c('con_' + o.id)).map(o => o.id),
-      profile: { work_type: v('work_type'), permit_required: c('permit_required'), permit_no: v('permit_no'), owner: v('owner'), completion_cert: c('completion_cert'), engineer_needed: c('engineer_needed'),
+      profile: { work_type: v('work_type'), permit_required: c('permit_required'), permit_no: v('permit_no'), owner: v('owner'), client_kind: v('client_kind') || '', completion_cert: c('completion_cert'), engineer_needed: c('engineer_needed'),
         permit_exempt: c('permit_exempt'), self_build: c('self_build'), area: +v('area') || 0, workers_max: +v('workers_max') || 0, duration_weeks: +v('duration_weeks') || 0,
         start_date: v('start_date'), contractors: Math.max(1, +v('contractors') || 1), single_responsible: c('single_responsible'), foreign_workers: c('foreign_workers'), scaffolds: c('scaffolds'),
         active_before: c('active_before'), activities: Object.fromEntries(Object.keys(ACTIVITIES).map(k => [k, c('act_' + k)]).filter(([, x]) => x)),
@@ -80,7 +82,11 @@ export function viewNewSite(siteId) {
   const refresh = () => {
     const r = read();
     $('#existingQ', el).hidden = !['fitout', 'renovation'].includes(r.profile.work_type);
-    $('#notes', el).innerHTML = profileNotes(r.profile).map(([k, t]) => `<div class="pn ${k}">${k === 'ok' ? '✓' : k === 'warn' ? '!' : '–'} ${esc(t)}</div>`).join('');
+    const cs = clientSummary(r.profile);
+    const line = `<div class="clientline ${cs.need ? 'need' : 'free'}"><b>מזמין ובקר בטיחות:</b> ${esc(cs.text)}</div>`;
+    $('#client2', el).innerHTML = line;
+    $('#client', el).innerHTML = line + (site && site.status === 'active' && cs.need && !derive(site.profile || {}).clientDuties ? '<div class="banner crit">האתר כבר בעבודה: בשמירה ייפתחו מיד חובות המזמין והבקר, עם התראה קריטית למזמין, לקבלן ולמנהל המערכת.</div>' : '');
+    $('#notes', el).innerHTML = profileNotes(r.profile).slice(1).map(([k, t]) => `<div class="pn ${k}">${k === 'ok' ? '✓' : k === 'warn' ? '!' : '–'} ${esc(t)}</div>`).join('');
     if (site) { // מה ישתנה בחובות
       const { add, upd } = sync({ ...site, profile: r.profile }, S.data.duties.filter(d => d.site_id === site.id));
       const na = upd.filter(u => u.status === 'na').map(u => S.data.duties.find(d => d.id === u.id)?.title);
@@ -98,6 +104,7 @@ export function viewNewSite(siteId) {
     if (r.cons.length > 1 && r.profile.contractors < r.cons.length) r.profile.contractors = r.cons.length;
     try {
       let s;
+      const flipped = site && site.status === 'active' && !derive(site.profile || {}).clientDuties && derive(r.profile).clientDuties;
       if (site) { s = await db.update('sites', site.id, { name: r.name, address: r.address, profile: r.profile }); Object.assign(site, s); s = site; }
       else { [s] = await db.insert('sites', { name: r.name, address: r.address, profile: r.profile, status: r.profile.active_before ? 'active' : 'planning' }); S.data.sites.push(s); }
       // שיוך ארגונים
@@ -106,7 +113,7 @@ export function viewNewSite(siteId) {
       for (const [org_id, kind] of want) if (!cur.some(x => x.org_id === org_id)) S.data.site_orgs.push(...await db.insert('site_orgs', { site_id: s.id, org_id, kind }));
       for (const x of cur) if (!want.some(([id]) => id === x.org_id)) { await db.remove('site_orgs', x.id); S.data.site_orgs = S.data.site_orgs.filter(y => y.id !== x.id); }
       await syncSite(s, false);
-      toast(site ? 'הפרופיל עודכן והחובות חושבו מחדש' : 'האתר נוצר. עכשיו מוסיפים בעלי תפקידים.');
+      toast(flipped ? 'נפתחו חובות המזמין ומינוי בקר הבטיחות, כהתראה קריטית.' : site ? 'הפרופיל עודכן והחובות חושבו מחדש' : 'האתר נוצר. עכשיו מוסיפים בעלי תפקידים.', flipped ? 'bad' : undefined);
       location.hash = site ? `#/site/${s.id}` : `#/site/${s.id}/people`;
       render();
     } catch (x) { err(x.message); }
