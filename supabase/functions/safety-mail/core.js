@@ -1,6 +1,6 @@
 // בניית המיילים של מערכת הבטיחות: התראה מיידית על חריגה קריטית, סיכום בוקר לכל אחראי, דוח שבועי ליזם.
 // קובץ בלי תלות בשרת, כדי שאפשר לבדוק אותו גם מחוץ ל-Supabase. duties.js הוא עותק של js/duties.js (sync-mail.sh)
-import { level, recipients, leftText, LEVELS, ROLES, EVENTS } from './duties.js';
+import { level, recipients, leftText, LEVELS, ROLES, EVENTS, derive, isWorking } from './duties.js';
 import { siteMonth, monthsBack, monthName, TREND_ROWS, arrow } from './monthly.js';
 
 export const APP = 'https://safety.tzi-eng.co.il/';
@@ -198,6 +198,52 @@ export function monthlyMails(data, now = Date.now()) {
   return out;
 }
 
+// ===== 5. אין צ'ק-אין עד 08:00: מייל למנהל האתר (ואם אין מנהל אתר, למבצע הבנייה) =====
+export const CHECKIN_ALERT_HOUR = 8;
+export function noCheckinMails(data, now = Date.now()) {
+  const t = israelNow(now);
+  if (t.hour < CHECKIN_ALERT_HOUR || t.hour >= 20) return [];
+  const out = [];
+  for (const s of data.sites) {
+    if (s.demo || !isWorking(s, now)) continue;
+    if (!derive(s.profile || {}).workDays.includes(t.dow)) continue;
+    if ((data.checkins || []).some(c => c.site_id === s.id && israelNow(new Date(c.at).getTime()).day === t.day)) continue;
+    const act = data.site_people.filter(p => p.site_id === s.id && p.active !== false);
+    const sm = act.filter(p => p.role === 'sm'), con = act.filter(p => p.role === 'con');
+    const to = addrs(sm.length ? sm : con);
+    const cc = addrs(sm.length ? con : []).filter(e => !to.includes(e));
+    const who = act.filter(p => ['wm', 'rep'].includes(p.role) && !p.backup).map(p => `${p.name} (${ROLES[p.role]})`).join(', ');
+    const inner = `<p style="margin:0 0 8px">באתר <b>${esc(s.name)}</b> עדיין לא בוצע צ'ק-אין היום (${fmtD(t.day)}), והשעה כבר אחרי ${String(CHECKIN_ALERT_HOUR).padStart(2, '0')}:00.</p>
+      <p style="margin:0 0 8px">לפי התקנות מבצע הבנייה עובד רק בנוכחות ובהשגחה של מנהל העבודה (או של הנציג באתר שפטור לפי תקנה 2(ז)). הצ'ק-אין במערכת הוא התיעוד לכך.</p>
+      ${who ? `<p style="margin:0 0 8px">מי שצריך לעשות צ'ק-אין: ${esc(who)}.</p>` : '<p style="margin:0 0 8px;color:#c62828">לא רשום באתר מנהל עבודה או נציג. צריך לרשום אחד בלשונית "בעלי תפקידים".</p>'}
+      <p style="margin:0">מה עושים: מתקשרים לאחראי באתר ומבקשים שיפתח את המערכת בטלפון וילחץ "צ'ק-אין". אם לא עובדים היום באתר, מסמנים זאת במערכת.</p>
+      ${sm.length ? '' : '<p style="font-size:12px;color:#7a8297;margin-top:8px">לא מונה מנהל אתר, ולכן המייל נשלח למבצע הבנייה.</p>'}`;
+    out.push({ kind: 'nocheckin', key: `nocheckin:${s.id}:${t.day}`, site_id: s.id, event: true, to, cc, subject: `⚠️ אין צ'ק-אין היום | ${s.name}`,
+      html: wrap("לא בוצע צ'ק-אין באתר", inner), text: `באתר ${s.name} לא בוצע צ'ק-אין היום עד ${CHECKIN_ALERT_HOUR}:00. ${APP}` });
+  }
+  return out;
+}
+
+// ===== 6. ביקורת של משרד העבודה באתר: מייל מיד לכל בעלי התפקידים =====
+export function laborInspectionMails(data, now = Date.now()) {
+  const out = [];
+  for (const x of data.site_inspections || []) {
+    if (x.inspector_role !== 'labor') continue;
+    if (now - new Date(x.started_at).getTime() > DAY) continue; // רק ביקורת שנפתחה ב-24 השעות האחרונות
+    const s = data.sites.find(y => y.id === x.site_id); if (!s || s.demo) continue;
+    const act = data.site_people.filter(p => p.site_id === s.id && p.active !== false);
+    const to = addrs(act.filter(p => ['con', 'sm', 'wm', 'rep', 'so'].includes(p.role)));
+    const cc = addrs(act.filter(p => ['dev', 'bakar'].includes(p.role))).filter(e => !to.includes(e));
+    const inner = `<p style="margin:0 0 8px">באתר <b>${esc(s.name)}</b> נפתחה עכשיו <b>ביקורת של מפקח עבודה ממשרד העבודה</b>.</p>
+      <p style="margin:0 0 8px">המבקר: ${esc(x.inspector_name)}${x.purpose ? '<br>מטרה: ' + esc(x.purpose) : ''}<br>נפתחה: ${fmt(x.started_at)}${x.started_by_email ? ' · על ידי ' + esc(x.started_by_email) : ''}</p>
+      <p style="margin:0 0 8px">כל מה שהמפקח צריך לראות מרוכז במסך "ביקורת באתר": בעלי תפקידים, עובדים והדרכות, ציוד ותסקירים, ליקויים ופנקס כללי.</p>
+      <p style="margin:0"><a href="${APP}#/site/${s.id}/inspect" style="color:#3D5A78;font-weight:bold">פתיחת מסך הביקורת</a></p>`;
+    out.push({ kind: 'labor', key: `labor:${x.id}`, site_id: s.id, event: true, to: to.length ? to : cc, cc: to.length ? cc : [], subject: `🔔 ביקורת משרד העבודה באתר | ${s.name}`,
+      html: wrap('ביקורת משרד העבודה באתר', inner), text: `באתר ${s.name} נפתחה ביקורת של מפקח עבודה: ${x.inspector_name}. ${APP}#/site/${s.id}/inspect` });
+  }
+  return out;
+}
+
 // מה לשלוח עכשיו. מפעילים כל 15 דקות: התראות (אירוע בכל שעה, השאר ביום), סיכום בוקר מ-07:00 בימים א'-ו', דוח שבועי ביום ראשון מ-07:00
 export function plan(data, now = Date.now(), opts = {}) {
   const t = israelNow(now);
@@ -205,6 +251,7 @@ export function plan(data, now = Date.now(), opts = {}) {
   // אירוע (תאונה, הפסקת עבודה) נשלח מיד בכל שעה. חובה קריטית אחרת נשלחת בין 07:00 ל-20:00
   const day = t.hour >= 7 && t.hour < 20;
   const out = alertMails(data, now).filter(m => day || m.event);
+  out.push(...laborInspectionMails(data, now), ...noCheckinMails(data, now));
   if ((morning && t.dow !== 6) || opts.forceDigest) out.push(...digestMails(data, now));
   if ((morning && t.dow === 0) || opts.forceWeekly) out.push(...weeklyMails(data, now));
   if ((morning && t.day.endsWith('-01')) || opts.forceMonthly) out.push(...monthlyMails(data, now));

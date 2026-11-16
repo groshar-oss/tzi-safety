@@ -28,7 +28,7 @@ async function load() {
   const [trainings, training_signatures, workers, equipment_checks, site_inspections] = await Promise.all([
     all('trainings', `&held_at=gte.${since}`, 'id,site_id,held_at').catch(() => []), all('training_signatures', `&signed_at=gte.${since}`, 'id,site_id,signed_at').catch(() => []),
     all('workers', `&created_at=gte.${since}`, 'id,site_id,created_at').catch(() => []), all('equipment_checks', `&day=gte.${since}`, 'id,site_id,day,ok').catch(() => []),
-    all('site_inspections', `&started_at=gte.${since}`, 'id,site_id,started_at').catch(() => [])]);
+    all('site_inspections', `&started_at=gte.${since}`, 'id,site_id,started_at,inspector_name,inspector_role,purpose,started_by_email').catch(() => [])]);
   return { sites, site_people, duties, events, defects, attendance, checkins, bakar_reports, accident_reports, trainings, training_signatures, workers, equipment_checks, site_inspections };
 }
 
@@ -50,7 +50,7 @@ async function backup(day: string) {
 
 async function send(m) {
   if (!RESEND) return { ok: false, error: 'RESEND_API_KEY missing' };
-  const body = { from: FROM, to: m.to, subject: m.subject, html: m.html, text: m.text, ...(m.cc?.length ? { cc: m.cc } : {}), ...(REPLY_TO ? { reply_to: REPLY_TO } : {}) };
+  const body = { from: FROM, to: m.to, subject: m.subject, html: m.html, text: m.text, ...(m.cc?.length ? { cc: m.cc } : {}), ...(m.bcc?.length ? { bcc: m.bcc } : {}), ...(REPLY_TO ? { reply_to: REPLY_TO } : {}) };
   for (let i = 0; i < 3; i++) {
     const r = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${RESEND}`, 'Content-Type': 'application/json', 'Idempotency-Key': m.key.slice(0, 256) }, body: JSON.stringify(body) });
     if (r.ok) return { ok: true, id: (await r.json()).id };
@@ -90,7 +90,10 @@ Deno.serve(async req => {
       }
     }
     const data = await load();
-    const mails = plan(data, now, opts);
+    const mails = plan(data, now, opts).filter(m => m.to?.length);
+    // מנהלי המערכת (צי הנדסה) מקבלים עותק נסתר של כל מייל
+    const admins = (await rest('profiles?select=email&is_service_admin=eq.true')).map(x => String(x.email || '').toLowerCase()).filter(Boolean);
+    for (const m of mails) m.bcc = admins.filter(e => !m.to.includes(e) && !(m.cc || []).includes(e));
     if (!mails.length) return new Response(JSON.stringify({ planned: 0, sent: 0, dry: !!opts.dry, backup: bk }));
     // מה כבר נשלח (מפתח לכל מייל: התראה פעם אחת לחובה, סיכום פעם ביום לאדם, דוח פעם בשבוע)
     const keys = [...new Set(mails.map(m => m.key))];
@@ -101,11 +104,11 @@ Deno.serve(async req => {
     }
     let sent = 0, failed = 0;
     const todo = mails.filter(m => !done.has(m.key));
-    if (opts.dry) return new Response(JSON.stringify({ dry: true, planned: mails.length, skipped: done.size, would_send: todo.map(m => ({ kind: m.kind, to: m.to, cc: m.cc, subject: m.subject })) }), { headers: { 'Content-Type': 'application/json' } });
+    if (opts.dry) return new Response(JSON.stringify({ dry: true, planned: mails.length, skipped: done.size, would_send: todo.map(m => ({ kind: m.kind, to: m.to, cc: m.cc, bcc: m.bcc, subject: m.subject })) }), { headers: { 'Content-Type': 'application/json' } });
     for (const m of todo) {
       const r = await send(m);
       await rest('mail_log?on_conflict=key', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: JSON.stringify({ key: m.key, kind: m.kind, site_id: m.site_id || null, to_list: [...m.to, ...(m.cc || [])], subject: m.subject, ok: r.ok, provider_id: r.id || null, error: r.error || null, sent_at: new Date().toISOString() }) });
+        body: JSON.stringify({ key: m.key, kind: m.kind, site_id: m.site_id || null, to_list: [...m.to, ...(m.cc || []), ...(m.bcc || [])], subject: m.subject, ok: r.ok, provider_id: r.id || null, error: r.error || null, sent_at: new Date().toISOString() }) });
       r.ok ? sent++ : failed++;
       await sleep(600); // Resend בחינם: עד 2 מיילים בשנייה
     }
