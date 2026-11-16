@@ -9,7 +9,29 @@ import { TRAINING_KINDS, COUNTS_ANNUAL, age, validIsraeliId, workersOf, training
 import { pad } from './sign.js';
 import { LANGS, langLabel, langCode, localStatement, reminderText, OK_BTN, SIGN_HERE, LINK_MSG } from '../langs.js';
 import { waLink, waShare, appUrl } from '../alerts.js';
-import { scanId, natName, natLang } from '../ocr.js';
+import { scanId, scanHeight, natName, natLang } from '../ocr.js';
+
+// צילום אישור עבודה בגובה: קוראים את התאריכים מהצילום וממלאים את התוקף (אם השדה ריק או מולא קודם מצילום)
+function heightScan(el) {
+  const inp = $('[name=height_file]', el), out = $('[name=height_until]', el); if (!inp || !out) return;
+  const box = h('<div class="small ocr-st" data-hocr aria-live="polite"></div>');
+  (inp.closest('.fld') || inp.parentElement).appendChild(box);
+  const dmy = x => x.split('-').reverse().join('.');
+  inp.addEventListener('change', async () => {
+    const file = inp.files[0]; if (!file) return;
+    box.className = 'small ocr-st mut'; box.textContent = 'קורא את התוקף מהאישור…';
+    try {
+      const r = await scanHeight(file);
+      if (!r) { box.className = 'small ocr-st warn'; box.textContent = 'לא מצאנו תאריך באישור. מצלמים שוב קרוב ובאור טוב, או ממלאים את התוקף ידנית.'; return; }
+      if (out.value && out.dataset.auto !== '1') { box.className = 'small ocr-st mut'; box.textContent = `נקרא מהאישור: בתוקף עד ${dmy(r.until)}. השארנו את התאריך שמילאתם.`; return; }
+      out.value = r.until; out.dataset.auto = '1'; out.dispatchEvent(new Event('change', { bubbles: true }));
+      box.className = 'small ocr-st ' + (r.expired ? 'warn' : 'ok');
+      box.textContent = (r.how === 'until' ? `✓ נקרא מהאישור: בתוקף עד ${dmy(r.until)}.` : `✓ נקרא מהאישור: הדרכה מ-${dmy(r.from)}, ולכן בתוקף עד ${dmy(r.until)} (שנתיים).`)
+        + (r.expired ? ' שים לב: האישור כבר פג.' : ' לבדוק מול האישור.');
+    } catch (x) { box.className = 'small ocr-st warn'; box.textContent = x.message || 'הקריאה נכשלה. ממלאים את התוקף ידנית.'; }
+  });
+  out.addEventListener('input', () => { out.dataset.auto = ''; });
+}
 import { openFile, fmtDT } from './common.js';
 
 export const canSeeWorkers = siteId => hasRole(siteId, 'con', 'so', 'sm', 'wm', 'rep', 'bakar');
@@ -116,14 +138,15 @@ export async function workerForm(s, w = null, { after } = {}) {
         ${fileField('אישור המוסד', 'f8_file')}</div>
       <h3>אישור עבודה בגובה <b class="req">*</b></h3>
       ${hx ? `<div class="banner">העובד הוחרג מאישור עבודה בגובה: ${esc(hx.reason)} (${esc(hx.approver_name || hx.approved_by_email || '')})</div>` : ''}
-      <div class="grid g2">${field('האישור בתוקף עד', 'height_until', w?.height_until || '', { type: 'date', hint: 'תקף עד שנתיים (תקנה 6(ג) לתקנות העבודה בגובה)' })}
-        ${fileField('צילום האישור' + (w?.height_path ? ' (קיים. אפשר להחליף)' : ''), 'height_file')}</div>
+      <div class="grid g2">${fileField('צילום האישור' + (w?.height_path ? ' (קיים. אפשר להחליף)' : ''), 'height_file')}
+        ${field('האישור בתוקף עד', 'height_until', w?.height_until || '', { type: 'date', hint: 'מתמלא לבד מהצילום. תקף עד שנתיים (תקנה 6(ג) לתקנות העבודה בגובה)' })}</div>
       ${!hx && !w?.height ? `<label class="chk"><input type="checkbox" name="no_height"> אין לעובד אישור כרגע</label>
       <p class="small mut" data-noh hidden>העובד יסומן "אסור להעסיק" עד שמצרפים אישור, או עד ש${esc(exemptApprover(s.id))} מאשר החרגה בכרטיס העובד.</p>` : ''}
       ${w ? `<label class="chk"><input type="checkbox" name="active" ${w.active === false ? '' : 'checked'}> פעיל באתר</label>` : ''}`,
     onMount: el => {
       const sync = () => { $$('.sub-f', el).forEach(b => b.hidden = !$(`[name=${b.dataset.for}]`, el).checked); const nh = $('[name=no_height]', el); if (nh) $('[data-noh]', el).hidden = !nh.checked; };
       $$('[name=foreign_worker],[name=no_height]', el).forEach(x => x.addEventListener('change', sync)); sync();
+      heightScan(el);
       // סריקת התעודה: קוראים את שורות ה-MRZ וממלאים שדות ריקים
       const inp = $('[name=id_photo]', el), box = h('<div class="small ocr-st" data-ocr aria-live="polite"></div>');
       (inp.closest('.fld') || inp.parentElement).appendChild(box);
@@ -259,7 +282,8 @@ async function heightCertForm(s, w) {
   let form = null;
   const v = await modal({ title: `אישור עבודה בגובה · ${w.name}`, ok: 'שמירה',
     body: `${fileField('צילום האישור', 'height_file', { req: true })}
-      ${field('האישור בתוקף עד', 'height_until', '', { type: 'date', req: true, hint: 'תקף עד שנתיים (תקנה 6(ג) לתקנות העבודה בגובה)' })}`,
+      ${field('האישור בתוקף עד', 'height_until', '', { type: 'date', req: true, hint: 'מתמלא לבד מהצילום. תקף עד שנתיים (תקנה 6(ג) לתקנות העבודה בגובה)' })}`,
+    onMount: el => heightScan(el),
     validate: (d, f) => {
       form = f;
       if (!f.height_file.files[0]) return 'צריך לצלם את האישור';
@@ -353,11 +377,16 @@ const TOPIC = {
 export async function newTraining(s) {
   const me = S.data.site_people.find(p => p.site_id === s.id && p.active !== false && (p.email || '').toLowerCase() === (S.user?.email || '').toLowerCase() && ['wm', 'rep', 'so'].includes(p.role))
     || S.data.site_people.find(p => p.site_id === s.id && p.active !== false && ['wm', 'rep'].includes(p.role) && !p.backup);
+  // שפת ההדרכה: אם כל העובדים שעוד לא הודרכו מבינים אותה שפה, בוחרים אותה לבד
+  const waiting = workersOf(s.id).filter(w => w.active !== false && !sigsOfWorker(w.id).length);
+  const wl = [...new Set(waiting.map(w => langLabel(w.language || 'he')))];
+  const defLang = wl.length === 1 ? wl[0] : 'עברית';
   const v = await modal({ title: 'הדרכה חדשה', ok: 'פתיחה והחתמת עובדים',
     body: `${select('סוג ההדרכה', 'kind', TRAINING_KINDS, 'intro')}
       ${area('נושא ותוכן ההדרכה', 'topic', TOPIC.intro)}
       <div class="grid g2">${field('שם המדריך', 'trainer_name', me?.name?.replace(/ \(.*\)$/, '') || '', { req: true })}${field('תפקיד וכשירות המדריך', 'trainer_title', me ? ({ rep: 'נציג מבצע הבנייה', so: 'ממונה בטיחות' }[me.role] || 'מנהל עבודה') + (me.license ? ', ' + me.license : '') : '')}</div>
-      ${select('שפת ההדרכה', 'language', Object.fromEntries(Object.values(LANGS).map(v => [v.he, v.he])), 'עברית')}
+      ${select('שפת ההדרכה', 'language', Object.fromEntries(Object.values(LANGS).map(v => [v.he, v.he])), defLang)}
+      ${wl.length > 1 ? `<p class="small warn">עובדים שעוד לא הודרכו מבינים כמה שפות (${esc(wl.join(', '))}). מעבירים הדרכה נפרדת לכל שפה, או מדריך שמדבר את השפה.</p>` : ''}
       <p class="small mut">ההדרכה באתר בנייה פנים אל פנים, בשפה שהעובד מבין, בידי בעל מקצוע מתאים. אחרי הפתיחה כל עובד חותם בטלפון של המדריך, או בטלפון שלו דרך קישור אישי ב-WhatsApp (בלי שם משתמש וסיסמה). ה-PDF נשמר לבד אחרי כל חתימה.</p>`,
     onMount: el => $('[name=kind]', el).addEventListener('change', e => { const t = $('[name=topic]', el); if (!t.value.trim() || Object.values(TOPIC).includes(t.value)) t.value = TOPIC[e.target.value] || ''; }),
     validate: d => !d.topic?.trim() ? 'צריך נושא' : !d.trainer_name?.trim() ? 'צריך שם מדריך' : null });

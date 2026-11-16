@@ -8,7 +8,7 @@ const LOCAL_KEY = 'grosher-safety-demo-v1';
 export const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
   const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
 
-const TABLES = ['orgs', 'memberships', 'sites', 'site_orgs', 'site_people', 'duties', 'events', 'notifications', 'files', 'audit_log', 'checkins', 'notices', 'signatures', 'workers', 'trainings', 'training_signatures', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'equipment_checks', 'safety_plans', 'share_links'];
+const TABLES = ['orgs', 'memberships', 'sites', 'site_orgs', 'site_people', 'duties', 'events', 'notifications', 'files', 'audit_log', 'checkins', 'notices', 'signatures', 'workers', 'trainings', 'training_signatures', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'equipment_checks', 'safety_plans', 'share_links', 'site_invites', 'site_invite_docs'];
 const AUDITED = ['orgs', 'memberships', 'sites', 'site_orgs', 'site_people', 'duties', 'events', 'notices', 'workers', 'trainings', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'equipment_checks', 'safety_plans'];
 
 function match(row, q = {}) {
@@ -69,7 +69,7 @@ class LocalDB {
     Object.assign(row, patch); this.audit(table, 'update', row, old); this.save(); return { ...row };
   }
   async remove(table, id) {
-    if (['duties', 'audit_log', 'notifications', 'notices', 'signatures', 'workers', 'trainings', 'training_signatures', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'equipment_checks', 'safety_plans', 'share_links'].includes(table)) throw new Error('אי אפשר למחוק רשומה זו. אפשר לסגור אותה עם נימוק.');
+    if (['duties', 'audit_log', 'notifications', 'notices', 'signatures', 'workers', 'trainings', 'training_signatures', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'equipment_checks', 'safety_plans', 'share_links', 'site_invites'].includes(table)) throw new Error('אי אפשר למחוק רשומה זו. אפשר לסגור אותה עם נימוק.');
     const row = this.data.tables[table].find(r => r.id === id);
     this.data.tables[table] = this.data.tables[table].filter(r => r.id !== id);
     if (row) this.audit(table, 'delete', row, { ...row });
@@ -128,6 +128,67 @@ function demoRpc(L, name, a) {
     T.training_signatures.push(row); r.used_at = iso; L.audit('training_signatures', 'insert', row); L.save();
     return { signed_at: iso };
   }
+  if (name.startsWith('invite_')) return demoInvite(L, name, a);
+  throw new Error('rpc ' + name);
+}
+
+// הזמנה בקישור במצב הדגמה: אותה התנהגות כמו invite110.sql
+const DOC_REQ = ['wm', 'so', 'bakar', 'fa'];
+function demoInvite(L, name, a) {
+  const T = L.data.tables, now = new Date(), iso = now.toISOString(), me = (window.__actor || 'demo').toLowerCase();
+  const bad = m => { throw new Error(m || 'הקישור לא בתוקף. צריך לבקש קישור חדש'); };
+  const byTok = tok => T.site_invites.find(r => r.token_hash === 'demo:' + tok);
+  const admin = () => L.data.role === 'admin';
+  if (name === 'invite_create') {
+    const tok = uuid().replace(/-/g, '') + uuid().replace(/-/g, '');
+    const r = { id: uuid(), site_id: a.p_site, role: a.p_role, backup: !!a.p_backup, label: a.p_label || null, token_hash: 'demo:' + tok, status: 'open',
+      expires_at: new Date(+now + 72 * HOUR).toISOString(), created_by_email: me, created_at: iso, opened_at: null, open_count: 0, has_doc: false };
+    T.site_invites.push(r); L.save();
+    return { id: r.id, token: tok, expires_at: r.expires_at };
+  }
+  if (name === 'invite_revoke') { const r = T.site_invites.find(x => x.id === a.p_id); if (r && ['open', 'pending'].includes(r.status)) Object.assign(r, { status: 'revoked', decided_at: iso, decided_by_email: me }); L.save(); return null; }
+  if (name === 'invite_info') {
+    const r = byTok(a.p_token); if (!r || r.status === 'revoked') bad();
+    if (r.status === 'open' && new Date(r.expires_at) < now) bad('תוקף הקישור פג. צריך לבקש קישור חדש');
+    const s = T.sites.find(x => x.id === r.site_id);
+    r.opened_at = iso; r.open_count++; L.save();
+    return { site: s?.name, address: s?.address, role: r.role, status: r.status, expires_at: r.expires_at, doc_required: DOC_REQ.includes(r.role),
+      name: r.status !== 'open' ? r.name : null, email: r.status !== 'open' ? r.email : null, reject_reason: r.status === 'rejected' ? r.reject_reason : null };
+  }
+  if (name === 'invite_submit') {
+    const r = byTok(a.p_token); const em = String(a.p_email || '').trim().toLowerCase();
+    if (!r || !['open', 'pending'].includes(r.status)) bad();
+    if (r.status === 'open' && new Date(r.expires_at) < now) bad('תוקף הקישור פג. צריך לבקש קישור חדש');
+    if (r.status === 'pending' && r.email !== em) bad('כבר נשלחה בקשה מהקישור הזה');
+    if (String(a.p_name || '').trim().length < 2) bad('צריך שם מלא');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) bad('האימייל לא תקין');
+    if (String(a.p_phone || '').replace(/\D/g, '').length < 9) bad('צריך מספר טלפון נייד');
+    let type = null;
+    if (a.p_doc) { type = (a.p_doc.match(/^data:([a-z]+\/[a-z0-9.+-]+);base64,/) || [])[1]; if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(type)) bad('אפשר לצרף תמונה או PDF'); }
+    if (DOC_REQ.includes(r.role) && !a.p_doc && !r.has_doc) bad('צריך לצרף את התעודה');
+    Object.assign(r, { status: 'pending', name: a.p_name.trim(), phone: a.p_phone.trim(), email: em, license: (a.p_license || '').trim() || null, submitted_at: iso, user_agent: a.p_ua || null,
+      has_doc: r.has_doc || !!a.p_doc, doc_type: type || r.doc_type || null, doc_name: a.p_doc_name || r.doc_name || null });
+    if (a.p_doc) { T.site_invite_docs = T.site_invite_docs.filter(d => d.invite_id !== r.id); T.site_invite_docs.push({ invite_id: r.id, data: a.p_doc, created_at: iso }); }
+    L.save(); return { status: 'pending' };
+  }
+  if (name === 'invite_decide') {
+    if (!admin()) bad('רק מנהל המערכת מאשר הצטרפות');
+    const r = T.site_invites.find(x => x.id === a.p_id); if (!r) bad('not_found');
+    if (r.status !== 'pending') bad('הבקשה כבר טופלה');
+    let pid = null;
+    if (a.p_ok) {
+      const ex = T.site_people.find(p => p.site_id === r.site_id && p.role === r.role && p.active !== false && (p.email || '').toLowerCase() === r.email);
+      if (ex) pid = ex.id;
+      else {
+        const p = { id: uuid(), created_at: iso, site_id: r.site_id, role: r.role, name: r.name, phone: r.phone, email: r.email, license: r.license, from_date: iso.slice(0, 10), to_date: null, backup: a.p_backup ?? r.backup, active: true };
+        T.site_people.push(p); L.audit('site_people', 'insert', p); pid = p.id;
+      }
+      Object.assign(r, { status: 'approved', person_id: pid, decided_at: iso, decided_by_email: me });
+    } else Object.assign(r, { status: 'rejected', reject_reason: a.p_reason || null, decided_at: iso, decided_by_email: me });
+    L.save(); return { status: r.status, person_id: pid };
+  }
+  if (name === 'invite_doc') { const r = T.site_invites.find(x => x.id === a.p_id); return { data: T.site_invite_docs.find(d => d.invite_id === a.p_id)?.data || null, name: r?.doc_name, type: r?.doc_type }; }
+  if (name === 'invite_mine') return [];
   throw new Error('rpc ' + name);
 }
 
@@ -167,7 +228,9 @@ class CloudDB {
   }
   async signUp(email, password) {
     const { data, error } = await this.sb.auth.signUp({ email, password, options: { emailRedirectTo: location.href.split('#')[0] } });
-    if (error) throw new Error(heAuthError(error.message));
+    if (error) { if (/already registered/i.test(error.message)) return 'exists'; throw new Error(heAuthError(error.message)); }
+    // אימייל שכבר רשום: השרת לא מגלה את זה בשגיאה, אבל מחזיר משתמש בלי זהויות
+    if (data.user && Array.isArray(data.user.identities) && !data.user.identities.length) return 'exists';
     return data.session ? 'signed_in' : 'confirm_email';
   }
   async resetPassword(email) {

@@ -75,9 +75,10 @@ async function prep(file, part) {
   return c;
 }
 let worker = null;
+const loadTess = () => window.Tesseract ? Promise.resolve() : new Promise((res, rej) => { const s = document.createElement('script'); s.src = TESS; s.onload = res; s.onerror = () => rej(new Error('צריך קליטה בפעם הראשונה כדי לטעון את קורא התעודות')); document.head.appendChild(s); });
 async function getWorker() {
   if (worker) return worker;
-  if (!window.Tesseract) await new Promise((res, rej) => { const s = document.createElement('script'); s.src = TESS; s.onload = res; s.onerror = () => rej(new Error('צריך קליטה בפעם הראשונה כדי לטעון את קורא התעודות')); document.head.appendChild(s); });
+  await loadTess();
   worker = await window.Tesseract.createWorker('eng');
   await worker.setParameters({ tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<', preserve_interword_spaces: '0' });
   return worker;
@@ -90,4 +91,37 @@ export async function scanId(file) {
     if (r) return r;
   }
   return null;
+}
+
+// ===== אישור עבודה בגובה: מציאת התוקף בצילום =====
+// אם כתוב "בתוקף עד" לוקחים את התאריך הזה. אחרת לוקחים את התאריך האחרון שכבר עבר (מועד ההדרכה או ההנפקה) ומוסיפים שנתיים (תקנה 6(ג) לתקנות העבודה בגובה)
+const iso = d => d.toISOString().slice(0, 10);
+export function parseHeightDates(text, now = new Date()) {
+  const lines = String(text || '').split(/\n/), found = [];
+  const re = /(\d{1,2})\s*[./\-]\s*(\d{1,2})\s*[./\-]\s*(\d{4}|\d{2})(?!\d)/g;
+  lines.forEach((l, i) => {
+    for (const m of l.matchAll(re)) {
+      const d = +m[1], mo = +m[2]; let y = +m[3]; if (y < 100) y += 2000;
+      if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 2010 || y > 2045) continue;
+      const dt = new Date(Date.UTC(y, mo - 1, d)); if (dt.getUTCDate() !== d) continue;
+      const before = l.slice(0, m.index) + ' ' + (lines[i - 1] || '');
+      found.push({ iso: iso(dt), dt, until: /תוקף|בתוקף|תפוגה|valid|expir/i.test(before) });
+    }
+  });
+  if (!found.length) return null;
+  const t0 = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())), today = iso(t0);
+  const max = new Date(t0); max.setUTCFullYear(max.getUTCFullYear() + 2); max.setUTCDate(max.getUTCDate() + 1);
+  const byDate = (a, b) => a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : 0;
+  const exp = found.filter(f => f.until && f.iso <= iso(max)).sort(byDate).pop();
+  if (exp) return { until: exp.iso, from: null, how: 'until', expired: exp.iso < today };
+  const past = found.filter(f => f.iso <= today).sort(byDate).pop();
+  if (!past) return null;
+  const u = new Date(past.dt); u.setUTCFullYear(u.getUTCFullYear() + 2);
+  return { until: iso(u), from: past.iso, how: 'from', expired: iso(u) < today };
+}
+let hworker = null;
+export async function scanHeight(file) {
+  if (!hworker) { await loadTess(); hworker = await window.Tesseract.createWorker(['heb', 'eng']); }
+  const { data } = await hworker.recognize(await prep(file, 'all'));
+  return parseHeightDates(data.text);
 }
