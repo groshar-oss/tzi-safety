@@ -7,6 +7,8 @@ import { ROLES, ASSIGNABLE, SIDE_OF } from '../duties.js';
 import { esc, h, $, $$, toast, modal, field, select, area, fileField } from '../util.js';
 import { waShare, mailtoLink, appUrl } from '../alerts.js';
 import { shrinkImage } from '../workers.js';
+import { authSigs, openAuthSign, pad } from './sign.js';
+import { authLetterBody } from './docs.js';
 
 const fmtDT = t => t ? new Date(t).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
@@ -17,7 +19,7 @@ export const DOC = {
   bakar: [true, 'רישיון מהנדס או הנדסאי, או תעודת בקר בטיחות'],
   fa: [true, 'תעודת מגיש עזרה ראשונה'],
   sm: [false, 'תעודה או רישיון (לא חובה)'],
-  rep: [false, 'תעודת הכשרה אם יש, למשל קורס מנהלי עבודה (לא חובה)'],
+  rep: [false, ''],
   dev: [false, ''], con: [false, '']
 };
 const LIC = { wm: 'מספר רישום בפנקס מנהלי העבודה', so: 'מספר תעודת ממונה', bakar: 'מספר רישיון', fa: 'מספר תעודה (אם יש)', sm: 'רישיון או הכשרה (אם יש)',
@@ -124,6 +126,7 @@ export async function reviewInvite(i) {
         <span>${esc(LIC[i.role] || 'רישיון / הכשרה')}</span><b>${esc(i.license || '—')}</b><span>נשלח</span><b>${fmtDT(i.submitted_at)}</b>
         <span>הקישור נשלח בידי</span><b dir="ltr">${esc(i.created_by_email || '')}</b></div>
       ${DOC[i.role]?.[1] ? `<h4>${esc(DOC[i.role][1])}</h4>${docHtml(d)}` : ''}
+      ${i.has_sig ? '<p class="small">✓ חתם/ה על כתב ההסמכה בהרשמה. באישור החתימה נשמרת על הכתב, ונשארת רק חתימת מבצע הבנייה.</p>' : ''}
       ${clash ? `<div class="banner crit">${esc(clash.name)} כבר ${esc(ROLES[clash.role])} באתר. התקנות אוסרות לכהן בשני התפקידים, והמערכת לא תאשר.</div>` : ''}
       ${same ? `<div class="banner">${esc(same.name)} כבר רשום/ה באתר בתפקיד הזה. האישור לא יוסיף כפילות.</div>` : ''}
       <label class="chk"><input type="checkbox" name="backup" ${i.backup ? 'checked' : ''}> ממלא מקום (מחליף)</label>
@@ -137,6 +140,7 @@ export async function reviewInvite(i) {
   try {
     await db.rpc('invite_decide', { p_id: i.id, p_ok: true, p_reason: null, p_backup: !!v.backup });
     S.data.site_people = await db.select('site_people', { order: 'created_at' });
+    S.data.signatures = await db.select('signatures', { order: 'created_at' }).catch(() => S.data.signatures);
     await reload(); render();
     toast(`${i.name} אושר/ה ונוסף/ה לאתר`);
   } catch (e) { toast(e.message, 'bad'); }
@@ -157,6 +161,22 @@ export function pendingBanner() {
     ${p.map(i => `<div class="inv-line"><span><b>${esc(i.name)}</b> · ${esc(ROLES[i.role] || i.role)} · ${esc(site(i.site_id))}</span><button class="btn small" data-review="${i.id}">בדיקה ואישור</button></div>`).join('')}</div>`;
 }
 export function wirePending(el) { $$('.inv-banner [data-review]', el).forEach(b => b.onclick = () => reviewInvite(invitesOf().find(i => i.id === b.dataset.review))); }
+
+// ===== נציג שאושר ועוד לא חתם על כתב ההסמכה: נפתח לו לבד אחרי הכניסה (פעם אחת בכל פתיחה של האפליקציה) =====
+let repAsked = false;
+export async function repSignPrompt() {
+  if (repAsked || !S.user || !S.data) return;
+  const me = (S.user.email || '').toLowerCase();
+  const mine = S.data.site_people.filter(p => p.role === 'rep' && p.active !== false && (p.email || '').toLowerCase() === me);
+  for (const p of mine) {
+    const site = S.data.sites.find(s => s.id === p.site_id); if (!site) continue;
+    const { cur } = await authSigs(site, p);
+    if (cur.rep) continue;
+    repAsked = true;
+    toast('כתב ההסמכה ממתין לחתימה שלך');
+    return openAuthSign(site, p);
+  }
+}
 
 // ===== משתמש שנרשם ועוד לא אושר =====
 export async function myInviteStatus() {
@@ -182,12 +202,31 @@ export function joinPage(token, r, page) {
       ${docLabel ? fileField(esc(docLabel), 'doc', { req, note: 'מצלמים את התעודה או מצרפים תמונה או PDF' }) : ''}
       <div class="grid g2">${field('סיסמה (8 תווים לפחות)', 'pw', '', { type: 'password', req: true, attrs: 'dir="ltr" autocomplete="new-password"' })}${field('הסיסמה שוב', 'pw2', '', { type: 'password', req: true, attrs: 'dir="ltr" autocomplete="new-password"' })}</div>
       <p class="small mut">עם האימייל והסיסמה האלה תיכנס למערכת. הגישה נפתחת אחרי שמנהל המערכת בודק את הפרטים ומאשר.</p>
+      ${r.role === 'rep' ? `<div class="join-sign"><h3>כתב הסמכה</h3><p class="small">כנציג מבצע הבנייה באתר לא צריך תעודה. צריך לקרוא את כתב ההסמכה ולחתום עליו. מבצע הבנייה חותם אחריך.</p>
+        <details open><summary><b>נוסח הכתב</b> (מתעדכן לפי הפרטים שמילאת)</summary><div class="sgdoc" data-letter></div></details>
+        <canvas class="sgpad" aria-label="משטח חתימה"></canvas>
+        <div class="actions"><button type="button" class="btn small ghost" data-clear>ניקוי החתימה</button></div>
+        <label class="chk big"><input type="checkbox" name="sig_ok"> קראתי את כתב ההסמכה ואני מאשר/ת את הנוסח</label></div>` : ''}
       <div class="err" hidden></div>
       <div class="actions"><button class="btn" type="submit" data-send>שליחת הבקשה</button></div>
     </form>
     <p class="small mut pub-foot">הקישור אישי ובתוקף עד ${esc(fmtDT(r.expires_at))}. הפרטים נשמרים במערכת ניהול הבטיחות של צי הנדסה ומשמשים רק לניהול הבטיחות באתר.</p>`);
   document.title = 'הצטרפות · ' + (r.site || '');
-  const form = $('form', el), err = m => { const b = $('.err', form); b.textContent = m || ''; b.hidden = !m; if (m) b.scrollIntoView({ block: 'center' }); };
+  // נציג: כתב ההסמכה נבנה בדיוק כמו באפליקציה, עם הפרטים שהוא ממלא, מתאריך היום
+  const isRep = r.role === 'rep';
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' });
+  const letter = f => authLetterBody({ id: r.site_id, name: r.site, address: r.address, profile: r.profile || {} },
+    { id: null, name: (f.name?.value || '').trim() || '________', phone: (f.phone?.value || '').trim(), email: (f.email?.value || '').trim().toLowerCase(), from_date: today, to_date: null },
+    { con: r.con || [], backups: r.backups || [] });
+  let sig = null;
+  const formEl = $('form', el);
+  if (isRep) {
+    sig = pad($('.join-sign canvas', el));
+    $('.join-sign [data-clear]', el).onclick = sig.clear;
+    const paint = () => { $('[data-letter]', el).innerHTML = letter(formEl); };
+    paint(); ['name', 'phone', 'email'].forEach(k => formEl[k].addEventListener('input', paint));
+  }
+  const form = formEl, err = m => { const b = $('.err', form); b.textContent = m || ''; b.hidden = !m; if (m) b.scrollIntoView({ block: 'center' }); };
   form.onsubmit = async e => {
     e.preventDefault(); err('');
     const v = Object.fromEntries(['name', 'phone', 'email', 'license', 'pw', 'pw2'].map(k => [k, (form[k]?.value || '').trim()]));
@@ -199,6 +238,8 @@ export function joinPage(token, r, page) {
     if (req && !file) return err('צריך לצרף את ' + docLabel);
     if (form.pw.value.length < 8) return err('הסיסמה צריכה 8 תווים לפחות');
     if (form.pw.value !== form.pw2.value) return err('שתי הסיסמאות לא זהות');
+    if (isRep && sig.empty()) return err('צריך לחתום על כתב ההסמכה במשטח החתימה');
+    if (isRep && !form.sig_ok.checked) return err('צריך לסמן שקראת את כתב ההסמכה');
     const btn = $('[data-send]', form); btn.disabled = true; btn.textContent = 'שולח…';
     try {
       let doc = null;
@@ -210,7 +251,8 @@ export function joinPage(token, r, page) {
         doc = { data: doc, name: f.name || 'צילום' };
       }
       await db.rpc('invite_submit', { p_token: token, p_name: v.name, p_phone: v.phone, p_email: v.email, p_license: v.license || null,
-        p_doc: doc?.data || null, p_doc_name: doc?.name || null, p_ua: navigator.userAgent.slice(0, 300) });
+        p_doc: doc?.data || null, p_doc_name: doc?.name || null, p_ua: navigator.userAgent.slice(0, 300),
+        p_sig: isRep ? sig.png() : null, p_sig_body: isRep ? letter(form) : null, p_sig_title: isRep ? 'נציג מבצע הבנייה באתר' : null });
       // יצירת המשתמש (שם משתמש וסיסמה). בלי אישור מנהל המערכת אין לו גישה לשום אתר
       let acc = 'demo';
       if (isCloud()) {

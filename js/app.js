@@ -15,7 +15,7 @@ import { viewField, isFieldUser } from './views/field.js';
 import { syncExpiry } from './workers.js';
 import { viewOverview, showOverview } from './views/overview.js';
 import { publicRoute, renderPublic } from './views/public.js';
-import { myInviteStatus } from './views/invite.js';
+import { myInviteStatus, repSignPrompt } from './views/invite.js';
 import { refreshInspectorLinks } from './views/inspect.js';
 
 export const S = { user: null, ctx: null, data: null };
@@ -193,6 +193,7 @@ export async function render() {
   paintNet();
   wireShell();
   view.dispatchEvent(new Event('mounted'));
+  if (!document.querySelector('.ov')) repSignPrompt().catch(e => console.warn('rep sign', e));
 }
 
 function renderLogin() {

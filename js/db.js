@@ -8,7 +8,7 @@ const LOCAL_KEY = 'grosher-safety-demo-v1';
 export const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
   const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
 
-const TABLES = ['orgs', 'memberships', 'sites', 'site_orgs', 'site_people', 'duties', 'events', 'notifications', 'files', 'audit_log', 'checkins', 'notices', 'signatures', 'workers', 'trainings', 'training_signatures', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'equipment_checks', 'safety_plans', 'share_links', 'site_invites', 'site_invite_docs'];
+const TABLES = ['orgs', 'memberships', 'sites', 'site_orgs', 'site_people', 'duties', 'events', 'notifications', 'files', 'audit_log', 'checkins', 'notices', 'signatures', 'workers', 'trainings', 'training_signatures', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'equipment_checks', 'safety_plans', 'share_links', 'site_invites', 'site_invite_docs', 'site_invite_sigs'];
 const AUDITED = ['orgs', 'memberships', 'sites', 'site_orgs', 'site_people', 'duties', 'events', 'notices', 'workers', 'trainings', 'equipment', 'inspections', 'attendance', 'worker_exemptions', 'site_inspections', 'defects', 'bakar_reports', 'accident_reports', 'equipment_checks', 'safety_plans'];
 
 function match(row, q = {}) {
@@ -134,7 +134,8 @@ function demoRpc(L, name, a) {
 
 // הזמנה בקישור במצב הדגמה: אותה התנהגות כמו invite110.sql
 const DOC_REQ = ['wm', 'so', 'bakar', 'fa'];
-function demoInvite(L, name, a) {
+const sha256hex = async t => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map(b => b.toString(16).padStart(2, '0')).join('');
+async function demoInvite(L, name, a) {
   const T = L.data.tables, now = new Date(), iso = now.toISOString(), me = (window.__actor || 'demo').toLowerCase();
   const bad = m => { throw new Error(m || 'הקישור לא בתוקף. צריך לבקש קישור חדש'); };
   const byTok = tok => T.site_invites.find(r => r.token_hash === 'demo:' + tok);
@@ -153,7 +154,10 @@ function demoInvite(L, name, a) {
     const s = T.sites.find(x => x.id === r.site_id);
     r.opened_at = iso; r.open_count++; L.save();
     return { site: s?.name, address: s?.address, role: r.role, status: r.status, expires_at: r.expires_at, doc_required: DOC_REQ.includes(r.role),
-      name: r.status !== 'open' ? r.name : null, email: r.status !== 'open' ? r.email : null, reject_reason: r.status === 'rejected' ? r.reject_reason : null };
+      name: r.status !== 'open' ? r.name : null, email: r.status !== 'open' ? r.email : null, reject_reason: r.status === 'rejected' ? r.reject_reason : null,
+      ...(r.role === 'rep' ? { site_id: s.id, profile: s.profile, backup: r.backup,
+        con: (() => { const o = T.site_orgs.filter(x => x.site_id === s.id && x.kind === 'contractor').map(x => T.orgs.find(g => g.id === x.org_id)?.name).filter(Boolean); return o.length ? o : T.site_people.filter(p => p.site_id === s.id && p.role === 'con' && p.active !== false && !p.backup).map(p => p.name); })(),
+        backups: T.site_people.filter(p => p.site_id === s.id && p.role === 'rep' && p.backup && p.active !== false).map(p => ({ name: p.name, phone: p.phone })) } : { con: [], backups: [] }) };
   }
   if (name === 'invite_submit') {
     const r = byTok(a.p_token); const em = String(a.p_email || '').trim().toLowerCase();
@@ -166,9 +170,11 @@ function demoInvite(L, name, a) {
     let type = null;
     if (a.p_doc) { type = (a.p_doc.match(/^data:([a-z]+\/[a-z0-9.+-]+);base64,/) || [])[1]; if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(type)) bad('אפשר לצרף תמונה או PDF'); }
     if (DOC_REQ.includes(r.role) && !a.p_doc && !r.has_doc) bad('צריך לצרף את התעודה');
+    if (r.role === 'rep' && (!/^data:image\/png;base64,/.test(a.p_sig || '') || (a.p_sig_body || '').length < 50)) bad('צריך לחתום על כתב ההסמכה');
     Object.assign(r, { status: 'pending', name: a.p_name.trim(), phone: a.p_phone.trim(), email: em, license: (a.p_license || '').trim() || null, submitted_at: iso, user_agent: a.p_ua || null,
       has_doc: r.has_doc || !!a.p_doc, doc_type: type || r.doc_type || null, doc_name: a.p_doc_name || r.doc_name || null });
     if (a.p_doc) { T.site_invite_docs = T.site_invite_docs.filter(d => d.invite_id !== r.id); T.site_invite_docs.push({ invite_id: r.id, data: a.p_doc, created_at: iso }); }
+    if (a.p_sig) { r.has_sig = true; T.site_invite_sigs = T.site_invite_sigs.filter(d => d.invite_id !== r.id); T.site_invite_sigs.push({ invite_id: r.id, image: a.p_sig, body: a.p_sig_body, signer_title: a.p_sig_title || null, created_at: iso }); }
     L.save(); return { status: 'pending' };
   }
   if (name === 'invite_decide') {
@@ -180,8 +186,15 @@ function demoInvite(L, name, a) {
       const ex = T.site_people.find(p => p.site_id === r.site_id && p.role === r.role && p.active !== false && (p.email || '').toLowerCase() === r.email);
       if (ex) pid = ex.id;
       else {
-        const p = { id: uuid(), created_at: iso, site_id: r.site_id, role: r.role, name: r.name, phone: r.phone, email: r.email, license: r.license, from_date: iso.slice(0, 10), to_date: null, backup: a.p_backup ?? r.backup, active: true };
+        const p = { id: uuid(), created_at: iso, site_id: r.site_id, role: r.role, name: r.name, phone: r.phone, email: r.email, license: r.license,
+          from_date: new Date(r.submitted_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }), to_date: null, backup: a.p_backup ?? r.backup, active: true };
         T.site_people.push(p); L.audit('site_people', 'insert', p); pid = p.id;
+      }
+      const g = T.site_invite_sigs.find(x => x.invite_id === r.id);
+      if (r.role === 'rep' && g) {
+        const hash = await sha256hex(g.body);
+        T.signatures.push({ id: uuid(), created_at: iso, site_id: r.site_id, doc_type: 'auth_letter', doc_ref: pid, doc_hash: hash, doc_snapshot: g.body, slot: 'rep', signer_name: r.name,
+          signer_title: g.signer_title || 'נציג מבצע הבנייה באתר', image: g.image, signed_by_email: r.email + ' (בהרשמה דרך קישור)', signed_at: r.submitted_at, user_agent: r.user_agent });
       }
       Object.assign(r, { status: 'approved', person_id: pid, decided_at: iso, decided_by_email: me });
     } else Object.assign(r, { status: 'rejected', reject_reason: a.p_reason || null, decided_at: iso, decided_by_email: me });
