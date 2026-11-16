@@ -2,7 +2,7 @@
 import { db } from '../db.js';
 import { S, siteById, myRoles, hasRole, canEditSite, siteOrgs, render, sideOf, conNames } from '../app.js';
 import { derive, profileNotes, gateStatus, ROLES, ASSIGNABLE, EVENTS, CAT, LEVELS, level, WORK_TYPES } from '../duties.js';
-import { exceptions } from '../alerts.js';
+import { exceptions, waLink, appUrl } from '../alerts.js';
 import { esc, h, $, $$, toast, modal, field, select, area, fmtDate } from '../util.js';
 import { dutyCard, compliance, gauge, openDuty, reportEvent, canReport, fmtDT, sideName } from './common.js';
 import { statusName } from './home.js';
@@ -200,7 +200,7 @@ function tabPeople(s) {
     <div class="plist">${all.map(p => `<div class="prow ${p.active === false ? 'off' : ''}">
       <div><b>${esc(p.name)}</b> ${p.backup ? '<span class="chip">מחליף</span>' : ''}${p.active === false ? '<span class="chip">לא פעיל</span>' : ''}<div class="small mut">${ROLES[p.role] || p.role}${p.license ? ' · ' + esc(p.license) : ''}</div></div>
       <div class="small" dir="ltr">${esc(p.phone || '')}<br>${esc(p.email || '')}</div>
-      <div class="actions">${p.role === 'rep' && p.active !== false ? `<button class="btn small ${authStatus(p) === 'signed' ? 'ghost' : ''}" data-auth="${p.id}">כתב הסמכה${authStatus(p) === 'signed' ? ' ✓ נחתם' : authStatus(p) === 'partial' ? ' · חסרה חתימה' : ' · לחתימה'}</button>` : ''}${personDoc(p) && canManage(s, p.role) ? `<button class="btn small ghost" data-pdoc="${p.id}">תעודה</button>` : ''}${canManage(s, p.role) ? `<button class="btn small ghost" data-edit="${p.id}">עריכה</button>` : ''}</div></div>`).join('')}
+      <div class="actions">${p.role === 'rep' && p.active !== false ? `<button class="btn small ${authStatus(p) === 'signed' ? 'ghost' : ''}" data-auth="${p.id}">כתב הסמכה${authStatus(p) === 'signed' ? ' ✓ נחתם' : authStatus(p) === 'partial' ? ' · חסרה חתימה' : ' · לחתימה'}</button>` : ''}${canManage(s, p.role) && p.phone && p.email && p.active !== false && ASSIGNABLE.includes(p.role) ? `<a class="btn small ghost wa" data-login="${p.id}" target="_blank" rel="noopener" href="${esc(loginWa(s, p))}" title="שליחת הוראות כניסה למערכת ב-WhatsApp">פרטי כניסה</a>` : ''}${personDoc(p) && canManage(s, p.role) ? `<button class="btn small ghost" data-pdoc="${p.id}">תעודה</button>` : ''}${canManage(s, p.role) ? `<button class="btn small ghost" data-edit="${p.id}">עריכה</button>` : ''}</div></div>`).join('')}
     ${missing.map(([r]) => `<div class="prow need"><div><b>${ROLES[r]}</b> <span class="chip red">חסר</span><div class="small mut">${esc(WHY[r] || '')}</div></div><div></div>
       <div class="actions">${canManage(s, r) ? `${canInvite(s, r) ? `<button class="btn small ghost" data-invr="${r}">הזמנה בקישור</button>` : ''}<button class="btn small" data-fill="${r}">השלמה</button>` : `<span class="small mut">ממנה ${SIDE_OF_ROLE[r] === 'dev' ? 'היזם' : 'הקבלן הראשי'}</span>`}</div></div>`).join('')}
     ${!all.length && !missing.length ? '<div class="empty">עוד לא הוגדרו בעלי תפקידים</div>' : ''}</div></div>${invitesCard(s)}</div>`);
@@ -213,6 +213,14 @@ function tabPeople(s) {
   $$('[data-auth]', el).forEach(b => b.onclick = () => openAuthSign(s, all.find(p => p.id === b.dataset.auth)));
   return el;
 }
+
+// הוראות כניסה ב-WhatsApp למי שנרשם בלשונית בעלי תפקידים (בלי הזמנה בקישור): נרשמים בעצמם עם אותו אימייל
+const loginWa = (s, p) => waLink(p.phone, `שלום ${p.name}, נרשמת במערכת ניהול הבטיחות של צי הנדסה, באתר ${s.name}, בתפקיד ${ROLES[p.role] || p.role}.
+כניסה ראשונה:
+1. נכנסים ל-${appUrl()}
+2. לוחצים "הרשמה", כותבים את האימייל ${p.email} ובוחרים סיסמה (8 תווים לפחות).
+3. מאשרים את המייל שמגיע (לפעמים באנגלית, "Confirm your signup").
+מאז נכנסים עם האימייל והסיסמה. כבר נרשמת בעבר? נכנסים כרגיל.`);
 
 async function personForm(s, p = null, preset = null) {
   // רק תפקידים שהתקנות דורשות (בלי "קבלן משנה" ו"צופה")

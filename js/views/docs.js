@@ -44,9 +44,10 @@ export function wmDutiesFor(site) {
 }
 
 // נוסח כתב ההסמכה (בלי חתימות). זה הנוסח שנחתם, וממנו מחושבת טביעת האצבע
-export function authLetterBody(site, person) {
-  const con = conNames(site.id).join(', ') || '________________';
-  const backups = S.data.site_people.filter(p => p.site_id === site.id && p.role === 'rep' && p.backup && p.active !== false && p.id !== person.id);
+// ctx: בעמוד ההרשמה בלי כניסה אין נתוני אתר בדפדפן, והשרת מוסר את שמות הקבלן וממלאי המקום (invite_info)
+export function authLetterBody(site, person, ctx = null) {
+  const con = (ctx ? ctx.con || [] : conNames(site.id)).join(', ') || '________________';
+  const backups = ctx ? ctx.backups || [] : S.data.site_people.filter(p => p.site_id === site.id && p.role === 'rep' && p.backup && p.active !== false && p.id !== person.id);
   const rows = wmDutiesFor(site).map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join('');
   return `<h2>הצדדים והאתר</h2>
     <table><tr><th>מבצע הבנייה</th><td>${esc(con)}</td></tr><tr><th>האתר</th><td>${esc(site.name)}, ${esc(site.address || '')}</td></tr>
