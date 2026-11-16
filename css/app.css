@@ -136,6 +136,10 @@ td .crit{color:#fff;background:#8e1b1b;border-radius:4px;padding:0 5px;font-size
 .login .box{background:var(--card);border-radius:16px;padding:26px;width:min(400px,100%)}
 .login .logo{display:flex;gap:10px;align-items:center;margin-bottom:18px}
 .login .logo{justify-content:center}.login .logo img{height:64px}
+/* לוגו: גרסה בהירה במצב כהה */
+.lg-dk{display:none!important}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .lg-lt{display:none!important}:root:not([data-theme=light]) .lg-dk{display:inline-block!important}}
+:root[data-theme=dark] .lg-lt{display:none!important}:root[data-theme=dark] .lg-dk{display:inline-block!important}
 
 /* טלפון */
 
